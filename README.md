@@ -4,7 +4,7 @@
 
 Analyze wallets, trace fund flows, detect scams, and generate court-ready evidence across 23 blockchain networks.
 
-🔗 **[onchainrisk.io](https://onchainrisk.io)**
+Use the platform: **[onchainrisk.io](https://onchainrisk.io)**
 
 ---
 
@@ -12,7 +12,7 @@ Analyze wallets, trace fund flows, detect scams, and generate court-ready eviden
 
 OnChainRisk is a blockchain forensics platform that helps investigators, compliance teams, and individuals assess the risk of any crypto wallet address.
 
-It combines transaction analysis, pattern detection, entity labeling, and AI-powered investigation into a single tool — accessible at a fraction of the cost of enterprise solutions.
+It combines transaction analysis, pattern detection, entity labeling, and AI-powered investigation into a single tool - accessible at a fraction of the cost of enterprise solutions.
 
 Supports 23 blockchain networks including Ethereum, Bitcoin, Solana, and Layer 2 ecosystems.
 
