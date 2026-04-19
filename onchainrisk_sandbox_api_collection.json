@@ -1,0 +1,210 @@
+{
+  "info": {
+    "_postman_id": "onchainrisk-sandbox-v1",
+    "name": "OnChainRisk Sandbox API",
+    "description": "Public sandbox tier. Create a sandbox API key at https://onchainrisk.io/register, set `sandbox_api_key` env var, and run any request.\n\nFor the `Create key` request you need a JWT (login via CAPTCHA in browser, grab token from localStorage). All other requests use the sandbox API key only.\n\n**Sandbox gates expensive fields** — responses match paid shape but `crossChain`, `tokenFlow`, `clusters`, `honeypot`, etc. are always `null`/`[]`. See `_sandbox.gated_fields[]` in response for the authoritative list.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "https://api.onchainrisk.io", "type": "string" },
+    { "key": "sandbox_api_key", "value": "ocr_live_REPLACE_ME", "type": "string", "description": "Your sandbox API key. Create at https://onchainrisk.io/dashboard/api-keys" },
+    { "key": "user_jwt", "value": "REPLACE_ME_IF_CREATING_KEYS", "type": "string", "description": "JWT from dashboard localStorage. Only needed for POST/DELETE /api/keys." },
+    { "key": "sample_address", "value": "0xa39b189482f984388a34460636fea9eb181ad1a6", "type": "string", "description": "Light demo address. Swap to your own for real integration testing." },
+    { "key": "user_address", "value": "0xREPLACE_ME_WITH_YOUR_ADDRESS", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "1. Auth sanity — GET /api/user/me",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{sandbox_api_key}}" }],
+        "url": { "raw": "{{base_url}}/api/user/me", "host": ["{{base_url}}"], "path": ["api", "user", "me"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('has key_type=sandbox', () => pm.expect(body.data.key_type).to.equal('sandbox'));",
+              "pm.test('has api_mode=sandbox', () => pm.expect(body.data.api_mode).to.equal('sandbox'));",
+              "pm.test('plan is real (not overridden to sandbox)', () => pm.expect(['free','pro','business','enterprise']).to.include(body.data.plan));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Check address — sample (Vitalik-light)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{sandbox_api_key}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\"\n}"
+        },
+        "url": { "raw": "{{base_url}}/api/v1/check", "host": ["{{base_url}}"], "path": ["api", "v1", "check"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const d = pm.response.json().data;",
+              "pm.test('_sandbox block present', () => pm.expect(d._sandbox).to.be.an('object'));",
+              "pm.test('_sandbox.profile = sandbox', () => pm.expect(d._sandbox.profile).to.equal('sandbox'));",
+              "pm.test('_sandbox.reports_saved = false', () => pm.expect(d._sandbox.reports_saved).to.equal(false));",
+              "pm.test('gated: crossChain is null', () => pm.expect(d.crossChain).to.equal(null));",
+              "pm.test('gated: tokenFlow is null', () => pm.expect(d.tokenFlow).to.equal(null));",
+              "pm.test('gated: clusters is null', () => pm.expect(d.clusters).to.equal(null));",
+              "pm.test('gated: topCounterparties is []', () => pm.expect(d.topCounterparties).to.eql([]));",
+              "pm.test('no reportId (sandbox does not persist)', () => pm.expect(d).to.not.have.property('reportId'));",
+              "pm.test('no analysisMode (omitted by policy)', () => pm.expect(d).to.not.have.property('analysisMode'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Check address — your own address",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{sandbox_api_key}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{user_address}}\",\n  \"network\": \"eth\"\n}"
+        },
+        "url": { "raw": "{{base_url}}/api/v1/check", "host": ["{{base_url}}"], "path": ["api", "v1", "check"] },
+        "description": "Replace `user_address` env var with any address. Same sandbox shape as Request 2."
+      }
+    },
+    {
+      "name": "4. Estimate scan complexity",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{sandbox_api_key}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\"\n}"
+        },
+        "url": { "raw": "{{base_url}}/api/analyze/estimate", "host": ["{{base_url}}"], "path": ["api", "analyze", "estimate"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const d = pm.response.json();",
+              "pm.test('has total_tx field', () => pm.expect(d).to.have.property('total_tx'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Blocked endpoint — /check/deep returns 403",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{sandbox_api_key}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\"\n}"
+        },
+        "url": { "raw": "{{base_url}}/api/v1/check/deep", "host": ["{{base_url}}"], "path": ["api", "v1", "check", "deep"] },
+        "description": "Peel chain / deep analysis is a paid-tier feature. Sandbox keys receive 403 with upgrade pointer."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('403 sandbox_not_supported', () => pm.response.to.have.status(403));",
+              "const d = pm.response.json();",
+              "pm.test('has upgrade_url', () => pm.expect(d.upgrade_url).to.include('pricing'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Invalid address — 400",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{sandbox_api_key}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"not-a-valid-address\",\n  \"network\": \"eth\"\n}"
+        },
+        "url": { "raw": "{{base_url}}/api/v1/check", "host": ["{{base_url}}"], "path": ["api", "v1", "check"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('400 on invalid address', () => pm.response.to.have.status(400));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. List API keys — requires JWT",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{user_jwt}}" }],
+        "url": { "raw": "{{base_url}}/api/keys", "host": ["{{base_url}}"], "path": ["api", "keys"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK (if JWT set correctly)', () => pm.expect([200, 401]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Create sandbox key — requires JWT",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{user_jwt}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"my-sandbox-key\"\n}"
+        },
+        "url": { "raw": "{{base_url}}/api/keys", "host": ["{{base_url}}"], "path": ["api", "keys"] },
+        "description": "Free users: key_type=sandbox. Paid users: key_type=paid. Server enforces — do not send key_type yourself."
+      }
+    }
+  ]
+}
