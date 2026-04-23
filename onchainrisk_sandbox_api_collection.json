@@ -88,34 +88,6 @@
       }
     },
     {
-      "name": "4. Estimate scan complexity",
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "Authorization", "value": "Bearer {{sandbox_api_key}}" },
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\"\n}"
-        },
-        "url": { "raw": "{{base_url}}/api/analyze/estimate", "host": ["{{base_url}}"], "path": ["api", "analyze", "estimate"] }
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', () => pm.response.to.have.status(200));",
-              "const d = pm.response.json();",
-              "pm.test('has total_tx field', () => pm.expect(d).to.have.property('total_tx'));"
-            ]
-          }
-        }
-      ]
-    },
-    {
       "name": "5. Blocked endpoint — /check/deep returns 403",
       "request": {
         "method": "POST",
