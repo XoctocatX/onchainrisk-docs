@@ -1,0 +1,1290 @@
+{
+  "info": {
+    "_postman_id": "onchainrisk-paid-v3",
+    "name": "OnChainRisk Paid API",
+    "description": "Full OnChainRisk API for Pro, Business, and Enterprise plans.\n\n**Setup:**\n1. Sign up at https://onchainrisk.io/register and upgrade to Pro or higher\n2. Dashboard → API Keys → Create a paid API key\n3. Set env var `paid_api_key` to your key\n4. Open any folder below — the top ones (Account → Analysis → ... → Labels) are safe to explore; the bottom ones (⚠ Advanced, ⚠ Destructive, Reference: Authentication) need extra caution.\n\n**Scope:** mirrors https://api.onchainrisk.io/docs except for admin-only endpoints. A CI coverage script (`validate:paid-coverage`) checks no core endpoint drifts out of sync with the Swagger spec.\n\n**Folder conventions:**\n- `Account` → `Labels` — safe day-to-day paid API onboarding. All use `Authorization: Bearer {{paid_api_key}}`.\n- `⚠ Advanced` — billing operations, MEV scan trigger, settings resets. Not destructive, but requires intent.\n- `⚠ Destructive` — every DELETE and account deletion. Running any of these removes data.\n- `Reference: Authentication` — signup / login / 2FA / password change flows. Production requires a Cloudflare Turnstile CAPTCHA, so these are documented for schema reference; real auth is done via dashboard UI.\n\n**Auth:** all paid endpoints accept the same API key. Auth folder endpoints that mutate auth state (change-password, 2FA, account deletion) use the browser JWT (`user_jwt` env var) — grab it from dashboard localStorage if you need to run those.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "https://api.onchainrisk.io", "type": "string" },
+    { "key": "paid_api_key", "value": "ocr_live_REPLACE_ME", "type": "string", "description": "Paid API key (Pro+). Create at https://onchainrisk.io/dashboard/api-keys" },
+    { "key": "user_jwt", "value": "REPLACE_ME_IF_NEEDED", "type": "string", "description": "JWT from browser localStorage. Only needed for Reference: Authentication folder (change-password, 2FA) and for DELETE /api/user/account in Destructive folder." },
+    { "key": "sample_address", "value": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", "type": "string", "description": "Vitalik — real data, explorable." },
+    { "key": "user_address", "value": "0xREPLACE_ME_WITH_YOUR_ADDRESS", "type": "string" },
+    { "key": "sample_token_address", "value": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "type": "string", "description": "USDC on Ethereum — safe honeypot/security test subject." },
+    { "key": "sample_block", "value": "19500000", "type": "string" },
+    { "key": "sample_tx_hash", "value": "0xREPLACE_ME_WITH_TX_HASH", "type": "string" },
+    { "key": "sample_email", "value": "you@example.com", "type": "string" },
+    {
+      "key": "sample_report_id", "value": "REPLACE_AFTER_FIRST_CHECK", "type": "string",
+      "description": "Auto-populated when you run POST /api/v1/check (sync path) or POST /api/v1/multichain/analyze (async). Source: response.data.reportId."
+    },
+    {
+      "key": "sample_scan_status_id", "value": "REPLACE_AFTER_ASYNC_SCAN", "type": "string",
+      "description": "Auto-populated when POST /api/v1/check returns 202 (heavy address routed to async queue). Source: response.data.reportId in the 202 payload."
+    },
+    {
+      "key": "sample_share_token", "value": "REPLACE_AFTER_SHARE_CREATE", "type": "string",
+      "description": "Auto-populated when you run POST /api/reports/{id}/share. Source: response.data.token."
+    },
+    {
+      "key": "sample_snapshot_id", "value": "REPLACE_AFTER_SNAPSHOT_CREATE", "type": "string",
+      "description": "Auto-populated when you run POST /api/reports/{id}/snapshots. Source: response.data.id."
+    },
+    {
+      "key": "sample_watchlist_id", "value": "REPLACE_AFTER_WATCHLIST_ADD", "type": "string",
+      "description": "Auto-populated when you run POST /api/watchlist. Source: response.data.id."
+    },
+    {
+      "key": "sample_label_id", "value": "REPLACE_AFTER_LABEL_CREATE", "type": "string",
+      "description": "Auto-populated when you run POST /api/labels. Source: response.data.id."
+    },
+    {
+      "key": "sample_investigation_id", "value": "REPLACE_AFTER_INVESTIGATE", "type": "string",
+      "description": "Auto-populated from GET /api/investigations (first item). Or run POST /api/investigate first."
+    },
+    {
+      "key": "sample_key_id", "value": "REPLACE_AFTER_KEY_LIST", "type": "string",
+      "description": "Auto-populated from GET /api/keys (first returned key id)."
+    },
+    {
+      "key": "sample_ticket_id", "value": "REPLACE_AFTER_TICKET_CREATE", "type": "string",
+      "description": "Auto-populated when you run POST /api/support/tickets. Source: response.data.id."
+    },
+    {
+      "key": "sample_payment_id", "value": "REPLACE_AFTER_UPGRADE", "type": "string",
+      "description": "Auto-populated when you run POST /api/billing/upgrade. Source: response.data.paymentId."
+    }
+  ],
+  "item": [
+    {
+      "name": "Account",
+      "item": [
+        {
+          "name": "GET /api/user/me — profile",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/user/me", "host": ["{{base_url}}"], "path": ["api", "user", "me"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "pm.test('plan is paid tier', () => pm.expect(['pro','business','enterprise']).to.include(d.plan));",
+                  "pm.test('NO sandbox markers', () => {",
+                  "  pm.expect(d).to.not.have.property('key_type');",
+                  "  pm.expect(d).to.not.have.property('api_mode');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /api/user/usage — quota status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/user/usage", "host": ["{{base_url}}"], "path": ["api", "user", "usage"] }
+          }
+        },
+        {
+          "name": "GET /api/user/risk-settings",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/user/risk-settings", "host": ["{{base_url}}"], "path": ["api", "user", "risk-settings"] }
+          }
+        },
+        {
+          "name": "PATCH /api/user/risk-settings",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"weights\": { \"mixer\": 40, \"sanction\": 100 },\n  \"overrides\": {}\n}" },
+            "url": { "raw": "{{base_url}}/api/user/risk-settings", "host": ["{{base_url}}"], "path": ["api", "user", "risk-settings"] }
+          }
+        },
+        {
+          "name": "GET /api/user/branding",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/user/branding", "host": ["{{base_url}}"], "path": ["api", "user", "branding"] }
+          }
+        },
+        {
+          "name": "PATCH /api/user/branding",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"logoUrl\": \"https://example.com/logo.png\",\n  \"primaryColor\": \"#00d4aa\"\n}" },
+            "url": { "raw": "{{base_url}}/api/user/branding", "host": ["{{base_url}}"], "path": ["api", "user", "branding"] }
+          }
+        },
+        {
+          "name": "GET /api/user/report-layout",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/user/report-layout", "host": ["{{base_url}}"], "path": ["api", "user", "report-layout"] }
+          }
+        },
+        {
+          "name": "PATCH /api/user/report-layout",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"sectionOrder\": [\"summary\", \"counterparties\", \"tokenFlow\"]\n}" },
+            "url": { "raw": "{{base_url}}/api/user/report-layout", "host": ["{{base_url}}"], "path": ["api", "user", "report-layout"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analysis",
+      "item": [
+        {
+          "name": "POST /api/v1/check — address risk analysis",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\"\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/check", "host": ["{{base_url}}"], "path": ["api", "v1", "check"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data;",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('sync path: reportId persisted', () => pm.expect(d.reportId).to.be.a('string'));",
+                  "  pm.test('NO _sandbox field (paid)', () => pm.expect(d).to.not.have.property('_sandbox'));",
+                  "  if (d.reportId) pm.collectionVariables.set('sample_report_id', d.reportId);",
+                  "} else if (pm.response.code === 202) {",
+                  "  pm.test('async path: returned status poll id', () => pm.expect(d.reportId).to.be.a('string'));",
+                  "  if (d.reportId) pm.collectionVariables.set('sample_scan_status_id', d.reportId);",
+                  "} else {",
+                  "  pm.test('200 or 202', () => pm.expect([200, 202]).to.include(pm.response.code));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /api/v1/check/{address} — fetch cached report",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check/{{sample_address}}?network=eth",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "check", "{{sample_address}}"],
+              "query": [{ "key": "network", "value": "eth" }]
+            }
+          }
+        },
+        {
+          "name": "POST /api/v1/check/deep — peel chain tracing",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\"\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/check/deep", "host": ["{{base_url}}"], "path": ["api", "v1", "check", "deep"] }
+          }
+        },
+        {
+          "name": "GET /api/v1/check/status/{id} — poll async scan",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/v1/check/status/{{sample_scan_status_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "check", "status", "{{sample_scan_status_id}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Token",
+      "item": [
+        {
+          "name": "POST /api/v1/token/check — honeypot + security score",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"address\": \"{{sample_token_address}}\",\n  \"network\": \"eth\"\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/token/check", "host": ["{{base_url}}"], "path": ["api", "v1", "token", "check"] }
+          }
+        },
+        {
+          "name": "POST /api/v1/token/check/stream — progressive SSE",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "text/event-stream" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"address\": \"{{sample_token_address}}\",\n  \"network\": \"eth\"\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/token/check/stream", "host": ["{{base_url}}"], "path": ["api", "v1", "token", "check", "stream"] }
+          }
+        },
+        {
+          "name": "POST /api/v1/token/reports — save report",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"address\": \"{{sample_token_address}}\",\n  \"network\": \"eth\",\n  \"reportData\": {}\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/token/reports", "host": ["{{base_url}}"], "path": ["api", "v1", "token", "reports"] }
+          }
+        },
+        {
+          "name": "GET /api/v1/token/reports — list saved",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/v1/token/reports", "host": ["{{base_url}}"], "path": ["api", "v1", "token", "reports"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Block / MEV",
+      "item": [
+        {
+          "name": "POST /api/v1/block/analyze — MEV patterns",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"blockNumber\": {{sample_block}},\n  \"network\": \"eth\"\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/block/analyze", "host": ["{{base_url}}"], "path": ["api", "v1", "block", "analyze"] }
+          }
+        },
+        {
+          "name": "POST /api/v1/block/reports — save block analysis",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"blockNumber\": {{sample_block}},\n  \"network\": \"eth\",\n  \"reportData\": {}\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/block/reports", "host": ["{{base_url}}"], "path": ["api", "v1", "block", "reports"] }
+          }
+        },
+        {
+          "name": "GET /api/v1/block/reports — list saved",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/v1/block/reports", "host": ["{{base_url}}"], "path": ["api", "v1", "block", "reports"] }
+          }
+        },
+        {
+          "name": "GET /api/v1/mev/bots — known MEV bot stats",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/v1/mev/bots", "host": ["{{base_url}}"], "path": ["api", "v1", "mev", "bots"] }
+          }
+        },
+        {
+          "name": "GET /api/v1/mev/stats — aggregate MEV stats",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/v1/mev/stats", "host": ["{{base_url}}"], "path": ["api", "v1", "mev", "stats"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Multi-chain",
+      "item": [
+        {
+          "name": "POST /api/v1/multichain/scan — quick overview",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"address\": \"{{sample_address}}\"\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/multichain/scan", "host": ["{{base_url}}"], "path": ["api", "v1", "multichain", "scan"] }
+          }
+        },
+        {
+          "name": "POST /api/v1/multichain/analyze — full cross-chain (5 credits)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"address\": \"{{sample_address}}\"\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/multichain/analyze", "host": ["{{base_url}}"], "path": ["api", "v1", "multichain", "analyze"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 202 || pm.response.code === 200) {",
+                  "  const d = pm.response.json().data;",
+                  "  if (d && d.reportId) pm.collectionVariables.set('sample_report_id', d.reportId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /api/v1/multichain/analyze/{reportId} — poll progress",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/v1/multichain/analyze/{{sample_report_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "multichain", "analyze", "{{sample_report_id}}"] }
+          }
+        },
+        {
+          "name": "POST /api/v1/multichain/reports — save",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"reportData\": {}\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/multichain/reports", "host": ["{{base_url}}"], "path": ["api", "v1", "multichain", "reports"] }
+          }
+        },
+        {
+          "name": "GET /api/v1/multichain/reports — list saved",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/v1/multichain/reports", "host": ["{{base_url}}"], "path": ["api", "v1", "multichain", "reports"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "AI Investigation",
+      "item": [
+        {
+          "name": "POST /api/investigate — start investigation (SSE)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "text/event-stream" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\",\n  \"question\": \"Summarize suspicious activity patterns.\"\n}" },
+            "url": { "raw": "{{base_url}}/api/investigate", "host": ["{{base_url}}"], "path": ["api", "investigate"] }
+          }
+        },
+        {
+          "name": "GET /api/investigations — list",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/investigations", "host": ["{{base_url}}"], "path": ["api", "investigations"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  const list = body.data?.investigations || body.data || [];",
+                  "  if (Array.isArray(list) && list.length > 0 && list[0].id) {",
+                  "    pm.collectionVariables.set('sample_investigation_id', String(list[0].id));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /api/investigations/{id} — detail",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/investigations/{{sample_investigation_id}}", "host": ["{{base_url}}"], "path": ["api", "investigations", "{{sample_investigation_id}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reports",
+      "item": [
+        {
+          "name": "GET /api/reports — list (with filters)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/reports?limit=10&network=eth",
+              "host": ["{{base_url}}"],
+              "path": ["api", "reports"],
+              "query": [
+                { "key": "limit", "value": "10" },
+                { "key": "network", "value": "eth" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/reports/{id} — detail",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/reports/{{sample_report_id}}", "host": ["{{base_url}}"], "path": ["api", "reports", "{{sample_report_id}}"] }
+          }
+        },
+        {
+          "name": "PATCH /api/reports/{id} — rename",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Case #123 — phishing investigation\"\n}" },
+            "url": { "raw": "{{base_url}}/api/reports/{{sample_report_id}}", "host": ["{{base_url}}"], "path": ["api", "reports", "{{sample_report_id}}"] }
+          }
+        },
+        {
+          "name": "GET /api/reports/{id}/graph — cached graph data",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/reports/{{sample_report_id}}/graph", "host": ["{{base_url}}"], "path": ["api", "reports", "{{sample_report_id}}", "graph"] }
+          }
+        },
+        {
+          "name": "PATCH /api/reports/{id}/graph — update graph state",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"graphData\": {\n    \"nodes\": [],\n    \"edges\": []\n  }\n}" },
+            "url": { "raw": "{{base_url}}/api/reports/{{sample_report_id}}/graph", "host": ["{{base_url}}"], "path": ["api", "reports", "{{sample_report_id}}", "graph"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Graph Snapshots",
+      "item": [
+        {
+          "name": "GET /api/reports/{reportId}/snapshots — list",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/reports/{{sample_report_id}}/snapshots", "host": ["{{base_url}}"], "path": ["api", "reports", "{{sample_report_id}}", "snapshots"] }
+          }
+        },
+        {
+          "name": "POST /api/reports/{reportId}/snapshots — create",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Before expanding cluster X\",\n  \"description\": \"Baseline before manual investigation.\",\n  \"graphData\": { \"nodes\": [], \"edges\": [] }\n}" },
+            "url": { "raw": "{{base_url}}/api/reports/{{sample_report_id}}/snapshots", "host": ["{{base_url}}"], "path": ["api", "reports", "{{sample_report_id}}", "snapshots"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const d = pm.response.json().data;",
+                  "  if (d && d.id) pm.collectionVariables.set('sample_snapshot_id', String(d.id));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /api/reports/{reportId}/snapshots/{snapshotId}",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/reports/{{sample_report_id}}/snapshots/{{sample_snapshot_id}}", "host": ["{{base_url}}"], "path": ["api", "reports", "{{sample_report_id}}", "snapshots", "{{sample_snapshot_id}}"] }
+          }
+        },
+        {
+          "name": "PATCH /api/reports/{reportId}/snapshots/{snapshotId}",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Updated name\"\n}" },
+            "url": { "raw": "{{base_url}}/api/reports/{{sample_report_id}}/snapshots/{{sample_snapshot_id}}", "host": ["{{base_url}}"], "path": ["api", "reports", "{{sample_report_id}}", "snapshots", "{{sample_snapshot_id}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sharing",
+      "item": [
+        {
+          "name": "POST /api/reports/{id}/share — create share token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"expiresIn\": 604800\n}" },
+            "url": { "raw": "{{base_url}}/api/reports/{{sample_report_id}}/share", "host": ["{{base_url}}"], "path": ["api", "reports", "{{sample_report_id}}", "share"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const d = pm.response.json().data;",
+                  "  if (d && d.token) pm.collectionVariables.set('sample_share_token', d.token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /api/reports/{id}/share — share status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/reports/{{sample_report_id}}/share", "host": ["{{base_url}}"], "path": ["api", "reports", "{{sample_report_id}}", "share"] }
+          }
+        },
+        {
+          "name": "GET /api/share/{token} — public view (no auth)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/share/{{sample_share_token}}", "host": ["{{base_url}}"], "path": ["api", "share", "{{sample_share_token}}"] },
+            "description": "Public endpoint — no auth. Anyone with the share token can view the report."
+          }
+        },
+        {
+          "name": "GET /api/share/{token}/graph — public graph",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/share/{{sample_share_token}}/graph", "host": ["{{base_url}}"], "path": ["api", "share", "{{sample_share_token}}", "graph"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Watchlist & Alerts",
+      "item": [
+        {
+          "name": "GET /api/watchlist — list",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/watchlist", "host": ["{{base_url}}"], "path": ["api", "watchlist"] }
+          }
+        },
+        {
+          "name": "POST /api/watchlist — add address",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\",\n  \"label\": \"Watched via Postman\",\n  \"notify_email\": 1\n}" },
+            "url": { "raw": "{{base_url}}/api/watchlist", "host": ["{{base_url}}"], "path": ["api", "watchlist"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const d = pm.response.json().data;",
+                  "  if (d && d.id) pm.collectionVariables.set('sample_watchlist_id', String(d.id));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /api/watchlist/{id} — update",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"label\": \"Updated label\",\n  \"notify_email\": 0,\n  \"notify_telegram\": 1\n}" },
+            "url": { "raw": "{{base_url}}/api/watchlist/{{sample_watchlist_id}}", "host": ["{{base_url}}"], "path": ["api", "watchlist", "{{sample_watchlist_id}}"] }
+          }
+        },
+        {
+          "name": "GET /api/watchlist/{id}/alerts — alerts for one item",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/watchlist/{{sample_watchlist_id}}/alerts", "host": ["{{base_url}}"], "path": ["api", "watchlist", "{{sample_watchlist_id}}", "alerts"] }
+          }
+        },
+        {
+          "name": "GET /api/alerts — all alerts",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/alerts", "host": ["{{base_url}}"], "path": ["api", "alerts"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "GET /api/notifications/settings",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/notifications/settings", "host": ["{{base_url}}"], "path": ["api", "notifications", "settings"] }
+          }
+        },
+        {
+          "name": "PATCH /api/notifications/settings",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"email_enabled\": 1,\n  \"webhook_url\": \"\",\n  \"webhook_enabled\": 0\n}" },
+            "url": { "raw": "{{base_url}}/api/notifications/settings", "host": ["{{base_url}}"], "path": ["api", "notifications", "settings"] }
+          }
+        },
+        {
+          "name": "POST /api/notifications/test",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/notifications/test", "host": ["{{base_url}}"], "path": ["api", "notifications", "test"] }
+          }
+        },
+        {
+          "name": "POST /api/notifications/telegram/connect",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"chatId\": \"your-telegram-chat-id\"\n}" },
+            "url": { "raw": "{{base_url}}/api/notifications/telegram/connect", "host": ["{{base_url}}"], "path": ["api", "notifications", "telegram", "connect"] }
+          }
+        },
+        {
+          "name": "POST /api/notifications/telegram/disconnect",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/notifications/telegram/disconnect", "host": ["{{base_url}}"], "path": ["api", "notifications", "telegram", "disconnect"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Labels",
+      "description": "Custom address labels. Bulk import/export for compliance teams.",
+      "item": [
+        {
+          "name": "GET /api/labels — list",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/labels", "host": ["{{base_url}}"], "path": ["api", "labels"] }
+          }
+        },
+        {
+          "name": "POST /api/labels — create",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\",\n  \"label\": \"Internal test\",\n  \"category\": \"custom\"\n}" },
+            "url": { "raw": "{{base_url}}/api/labels", "host": ["{{base_url}}"], "path": ["api", "labels"] },
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "if (pm.response.code === 201) {",
+                    "  const d = pm.response.json().data;",
+                    "  if (d && d.id) pm.collectionVariables.set('sample_label_id', String(d.id));",
+                    "}"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "PATCH /api/labels/{id}",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"label\": \"Updated\",\n  \"notes\": \"Investigation #42\"\n}" },
+            "url": { "raw": "{{base_url}}/api/labels/{{sample_label_id}}", "host": ["{{base_url}}"], "path": ["api", "labels", "{{sample_label_id}}"] }
+          }
+        },
+        {
+          "name": "POST /api/labels/import — bulk import",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"labels\": [\n    { \"address\": \"0x...\", \"network\": \"eth\", \"label\": \"Exchange hot\", \"category\": \"custom\" }\n  ]\n}" },
+            "url": { "raw": "{{base_url}}/api/labels/import", "host": ["{{base_url}}"], "path": ["api", "labels", "import"] }
+          }
+        },
+        {
+          "name": "GET /api/labels/export — export all",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/labels/export", "host": ["{{base_url}}"], "path": ["api", "labels", "export"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Graph Operations",
+      "item": [
+        {
+          "name": "POST /api/graph/expand — expand counterparties",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\"\n}" },
+            "url": { "raw": "{{base_url}}/api/graph/expand", "host": ["{{base_url}}"], "path": ["api", "graph", "expand"] }
+          }
+        },
+        {
+          "name": "POST /api/graph/csv-import — import fund flow CSV",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"reportId\": \"{{sample_report_id}}\",\n  \"csv\": \"from,to,value\\n0x...,0x...,100\"\n}" },
+            "url": { "raw": "{{base_url}}/api/graph/csv-import", "host": ["{{base_url}}"], "path": ["api", "graph", "csv-import"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "API Keys",
+      "description": "All /api/keys endpoints accept the paid API key (empirically verified). Sandbox-tier free users create keys via dashboard only.",
+      "item": [
+        {
+          "name": "GET /api/keys — list",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/keys", "host": ["{{base_url}}"], "path": ["api", "keys"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  const list = body.data?.keys || body.data || [];",
+                  "  if (Array.isArray(list) && list.length > 0 && list[0].id) {",
+                  "    pm.collectionVariables.set('sample_key_id', String(list[0].id));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /api/keys — create new key",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"My integration key\"\n}" },
+            "url": { "raw": "{{base_url}}/api/keys", "host": ["{{base_url}}"], "path": ["api", "keys"] },
+            "description": "Creates a new paid API key (your plan determines the max allowed). The full key is returned once in response.data.key — store it securely."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const d = pm.response.json().data;",
+                  "  if (d && d.id) pm.collectionVariables.set('sample_key_id', String(d.id));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Support",
+      "item": [
+        {
+          "name": "POST /api/support/tickets — create",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"subject\": \"API integration question\",\n  \"description\": \"Details...\",\n  \"category\": \"technical\"\n}" },
+            "url": { "raw": "{{base_url}}/api/support/tickets", "host": ["{{base_url}}"], "path": ["api", "support", "tickets"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const d = pm.response.json().data;",
+                  "  if (d && d.id) pm.collectionVariables.set('sample_ticket_id', String(d.id));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /api/support/tickets — list",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/support/tickets", "host": ["{{base_url}}"], "path": ["api", "support", "tickets"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Telemetry",
+      "description": "Lightweight client-side telemetry. Optional for external integrations.",
+      "item": [
+        {
+          "name": "POST /api/v1/telemetry/archetype",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"publicId\": \"{{sample_report_id}}\",\n  \"archetype\": \"exchange_like\",\n  \"network\": \"eth\",\n  \"txCount\": 1000\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/telemetry/archetype", "host": ["{{base_url}}"], "path": ["api", "v1", "telemetry", "archetype"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "⚠ Advanced",
+      "description": "Not destructive, but require intent: billing operations that affect your subscription, MEV manual scan trigger (non-free compute), settings resets, notification tests.",
+      "item": [
+        {
+          "name": "POST /api/v1/mev/scan/trigger — manual MEV scan",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"network\": \"eth\"\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/mev/scan/trigger", "host": ["{{base_url}}"], "path": ["api", "v1", "mev", "scan", "trigger"] },
+            "description": "Triggers a manual MEV scan. Non-free compute — use sparingly; cron typically handles this automatically."
+          }
+        },
+        {
+          "name": "POST /api/billing/upgrade — request upgrade",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"plan\": \"pro\",\n  \"billingPeriod\": \"monthly\"\n}" },
+            "url": { "raw": "{{base_url}}/api/billing/upgrade", "host": ["{{base_url}}"], "path": ["api", "billing", "upgrade"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const d = pm.response.json().data;",
+                  "  if (d && d.paymentId) pm.collectionVariables.set('sample_payment_id', String(d.paymentId));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /api/billing/credits — buy credits",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 100\n}" },
+            "url": { "raw": "{{base_url}}/api/billing/credits", "host": ["{{base_url}}"], "path": ["api", "billing", "credits"] }
+          }
+        },
+        {
+          "name": "POST /api/billing/verify — verify payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"paymentId\": \"{{sample_payment_id}}\",\n  \"txHash\": \"{{sample_tx_hash}}\",\n  \"network\": \"eth\"\n}" },
+            "url": { "raw": "{{base_url}}/api/billing/verify", "host": ["{{base_url}}"], "path": ["api", "billing", "verify"] }
+          }
+        },
+        {
+          "name": "GET /api/billing/subscription",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/billing/subscription", "host": ["{{base_url}}"], "path": ["api", "billing", "subscription"] }
+          }
+        },
+        {
+          "name": "GET /api/billing/history",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/billing/history", "host": ["{{base_url}}"], "path": ["api", "billing", "history"] }
+          }
+        },
+        {
+          "name": "GET /api/billing/refund/status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/billing/refund/status?paymentId={{sample_payment_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "billing", "refund", "status"],
+              "query": [{ "key": "paymentId", "value": "{{sample_payment_id}}" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "⚠ Destructive",
+      "description": "Every request here removes data or changes a resource irreversibly. Double-check the {{sample_*}} id variables before running — you might overwrite state you care about. Where possible, test against dummy records first.",
+      "item": [
+        {
+          "name": "DELETE /api/reports/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/reports/{{sample_report_id}}", "host": ["{{base_url}}"], "path": ["api", "reports", "{{sample_report_id}}"] }
+          }
+        },
+        {
+          "name": "DELETE /api/reports/{reportId}/snapshots/{snapshotId}",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/reports/{{sample_report_id}}/snapshots/{{sample_snapshot_id}}", "host": ["{{base_url}}"], "path": ["api", "reports", "{{sample_report_id}}", "snapshots", "{{sample_snapshot_id}}"] }
+          }
+        },
+        {
+          "name": "DELETE /api/reports/{id}/share — revoke share token",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/reports/{{sample_report_id}}/share", "host": ["{{base_url}}"], "path": ["api", "reports", "{{sample_report_id}}", "share"] }
+          }
+        },
+        {
+          "name": "DELETE /api/watchlist/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/watchlist/{{sample_watchlist_id}}", "host": ["{{base_url}}"], "path": ["api", "watchlist", "{{sample_watchlist_id}}"] }
+          }
+        },
+        {
+          "name": "DELETE /api/labels/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/labels/{{sample_label_id}}", "host": ["{{base_url}}"], "path": ["api", "labels", "{{sample_label_id}}"] }
+          }
+        },
+        {
+          "name": "DELETE /api/keys/{id} — revoke API key",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/keys/{{sample_key_id}}", "host": ["{{base_url}}"], "path": ["api", "keys", "{{sample_key_id}}"] },
+            "description": "Revokes the specified key. If you revoke the same key you're authenticating with, subsequent requests will 401."
+          }
+        },
+        {
+          "name": "POST /api/investigations/{id}/archive",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/investigations/{{sample_investigation_id}}/archive", "host": ["{{base_url}}"], "path": ["api", "investigations", "{{sample_investigation_id}}", "archive"] },
+            "description": "Archives the investigation (soft removal from active list)."
+          }
+        },
+        {
+          "name": "DELETE /api/user/risk-settings — reset to defaults",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/user/risk-settings", "host": ["{{base_url}}"], "path": ["api", "user", "risk-settings"] }
+          }
+        },
+        {
+          "name": "DELETE /api/user/branding — reset to defaults",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/user/branding", "host": ["{{base_url}}"], "path": ["api", "user", "branding"] }
+          }
+        },
+        {
+          "name": "DELETE /api/user/report-layout — reset to defaults",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/user/report-layout", "host": ["{{base_url}}"], "path": ["api", "user", "report-layout"] }
+          }
+        },
+        {
+          "name": "POST /api/billing/refund/request",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"paymentId\": \"{{sample_payment_id}}\",\n  \"reason\": \"requested within policy window\",\n  \"refundAddress\": \"0x...\"\n}" },
+            "url": { "raw": "{{base_url}}/api/billing/refund/request", "host": ["{{base_url}}"], "path": ["api", "billing", "refund", "request"] },
+            "description": "Requests a refund on a past payment. Refunds are processed manually after approval."
+          }
+        },
+        {
+          "name": "DELETE /api/user/account — permanently delete account",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_jwt}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"password\": \"your-password\"\n}" },
+            "url": { "raw": "{{base_url}}/api/user/account", "host": ["{{base_url}}"], "path": ["api", "user", "account"] },
+            "description": "PERMANENT. Deletes the user, all API keys, all saved reports. Uses browser JWT (user_jwt) rather than API key because this operation also revokes the API keys themselves."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reference: Authentication (CAPTCHA required)",
+      "description": "Auth surface for schema reference only. Production register / login / forgot flows require a Cloudflare Turnstile CAPTCHA token. The dashboard at https://onchainrisk.io handles these flows interactively; direct Postman calls typically fail CAPTCHA validation unless you extract a valid token from a browser session. Kept here so integrators can inspect the expected request/response shapes for their own auth UI.",
+      "item": [
+        {
+          "name": "POST /api/auth/register",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{sample_email}}\",\n  \"password\": \"StrongPass123!\",\n  \"turnstileToken\": \"required_in_production\"\n}" },
+            "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] }
+          }
+        },
+        {
+          "name": "POST /api/auth/login",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{sample_email}}\",\n  \"password\": \"StrongPass123!\",\n  \"turnstileToken\": \"required_in_production\"\n}" },
+            "url": { "raw": "{{base_url}}/api/auth/login", "host": ["{{base_url}}"], "path": ["api", "auth", "login"] }
+          }
+        },
+        {
+          "name": "GET /api/auth/verify — confirm email",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/auth/verify?token=from-verification-email",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "verify"],
+              "query": [{ "key": "token", "value": "from-verification-email" }]
+            }
+          }
+        },
+        {
+          "name": "POST /api/auth/forgot",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{sample_email}}\"\n}" },
+            "url": { "raw": "{{base_url}}/api/auth/forgot", "host": ["{{base_url}}"], "path": ["api", "auth", "forgot"] }
+          }
+        },
+        {
+          "name": "POST /api/auth/reset",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"token\": \"from-reset-email\",\n  \"newPassword\": \"NewPass123!\"\n}" },
+            "url": { "raw": "{{base_url}}/api/auth/reset", "host": ["{{base_url}}"], "path": ["api", "auth", "reset"] }
+          }
+        },
+        {
+          "name": "POST /api/auth/change-password",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_jwt}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"currentPassword\": \"current\",\n  \"newPassword\": \"NewPass123!\"\n}" },
+            "url": { "raw": "{{base_url}}/api/auth/change-password", "host": ["{{base_url}}"], "path": ["api", "auth", "change-password"] }
+          }
+        },
+        {
+          "name": "POST /api/auth/2fa/setup",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{user_jwt}}" }],
+            "url": { "raw": "{{base_url}}/api/auth/2fa/setup", "host": ["{{base_url}}"], "path": ["api", "auth", "2fa", "setup"] }
+          }
+        },
+        {
+          "name": "POST /api/auth/2fa/verify-setup",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_jwt}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"code\": \"123456\"\n}" },
+            "url": { "raw": "{{base_url}}/api/auth/2fa/verify-setup", "host": ["{{base_url}}"], "path": ["api", "auth", "2fa", "verify-setup"] }
+          }
+        },
+        {
+          "name": "POST /api/auth/2fa/verify",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_jwt}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"code\": \"123456\"\n}" },
+            "url": { "raw": "{{base_url}}/api/auth/2fa/verify", "host": ["{{base_url}}"], "path": ["api", "auth", "2fa", "verify"] }
+          }
+        },
+        {
+          "name": "POST /api/auth/2fa/disable",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_jwt}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"password\": \"your-password\"\n}" },
+            "url": { "raw": "{{base_url}}/api/auth/2fa/disable", "host": ["{{base_url}}"], "path": ["api", "auth", "2fa", "disable"] }
+          }
+        }
+      ]
+    }
+  ]
+}
