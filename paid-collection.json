@@ -946,24 +946,6 @@
       ]
     },
     {
-      "name": "Telemetry",
-      "description": "Lightweight client-side telemetry. Optional for external integrations.",
-      "item": [
-        {
-          "name": "POST /api/v1/telemetry/archetype",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": { "mode": "raw", "raw": "{\n  \"publicId\": \"{{sample_report_id}}\",\n  \"archetype\": \"exchange_like\",\n  \"network\": \"eth\",\n  \"txCount\": 1000\n}" },
-            "url": { "raw": "{{base_url}}/api/v1/telemetry/archetype", "host": ["{{base_url}}"], "path": ["api", "v1", "telemetry", "archetype"] }
-          }
-        }
-      ]
-    },
-    {
       "name": "⚠ Advanced",
       "description": "Not destructive, but require intent: billing operations that affect your subscription, MEV manual scan trigger (non-free compute), settings resets, notification tests.",
       "item": [
