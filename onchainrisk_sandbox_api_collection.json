@@ -2,15 +2,14 @@
   "info": {
     "_postman_id": "onchainrisk-sandbox-v1",
     "name": "OnChainRisk Sandbox API",
-    "description": "Public sandbox tier. Create a sandbox API key at https://onchainrisk.io/register, set `sandbox_api_key` env var, and run any request.\n\nFor the `Create key` request you need a JWT (login via CAPTCHA in browser, grab token from localStorage). All other requests use the sandbox API key only.\n\n**Sandbox gates expensive fields** — responses match paid shape but `crossChain`, `tokenFlow`, `clusters`, `honeypot`, etc. are always `null`/`[]`. See `_sandbox.gated_fields[]` in response for the authoritative list.",
+    "description": "Public sandbox tier — integration testing against real OnChainRisk API.\n\n**Setup (one-time, via dashboard — NOT via this collection):**\n1. Sign up at https://onchainrisk.io/register (CAPTCHA required)\n2. Dashboard → API Keys → Create sandbox key (1 max for free tier)\n3. Copy the key (shown once)\n4. In Postman: set env var `sandbox_api_key` to your key\n\nAll requests here use that key via `Authorization: Bearer {{sandbox_api_key}}`. Key management (create/rotate/revoke) lives in the dashboard — not exposed to sandbox because the self-service flow is intentional.\n\n**Sandbox gates expensive fields** — responses match paid shape but `crossChain`, `tokenFlow`, `clusters`, `honeypot`, etc. are always `null`/`[]`. See `_sandbox.gated_fields[]` in every response for the authoritative list.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "base_url", "value": "https://api.onchainrisk.io", "type": "string" },
-    { "key": "sandbox_api_key", "value": "ocr_live_REPLACE_ME", "type": "string", "description": "Your sandbox API key. Create at https://onchainrisk.io/dashboard/api-keys" },
-    { "key": "user_jwt", "value": "REPLACE_ME_IF_CREATING_KEYS", "type": "string", "description": "JWT from dashboard localStorage. Only needed for POST/DELETE /api/keys." },
-    { "key": "sample_address", "value": "0xa39b189482f984388a34460636fea9eb181ad1a6", "type": "string", "description": "Light demo address. Swap to your own for real integration testing." },
-    { "key": "user_address", "value": "0xREPLACE_ME_WITH_YOUR_ADDRESS", "type": "string" }
+    { "key": "sandbox_api_key", "value": "ocr_live_REPLACE_ME", "type": "string", "description": "Your sandbox API key. Create one in the dashboard: https://onchainrisk.io/dashboard/api-keys" },
+    { "key": "sample_address", "value": "0xa39b189482f984388a34460636fea9eb181ad1a6", "type": "string", "description": "Light demo address — runs fast. Swap to your own for real integration testing." },
+    { "key": "user_address", "value": "0xREPLACE_ME_WITH_YOUR_ADDRESS", "type": "string", "description": "Your own address for Request 3." }
   ],
   "item": [
     {
@@ -172,11 +171,12 @@
       ]
     },
     {
-      "name": "7. List API keys — requires JWT",
+      "name": "7. Fetch API-level docs (OpenAPI spec)",
       "request": {
         "method": "GET",
-        "header": [{ "key": "Authorization", "value": "Bearer {{user_jwt}}" }],
-        "url": { "raw": "{{base_url}}/api/keys", "host": ["{{base_url}}"], "path": ["api", "keys"] }
+        "header": [],
+        "url": { "raw": "{{base_url}}/openapi-sandbox.yaml", "host": ["{{base_url}}"], "path": ["openapi-sandbox.yaml"] },
+        "description": "Raw OpenAPI 3.1 spec for code generators (openapi-generator, orval, etc.). No auth required."
       },
       "event": [
         {
@@ -184,27 +184,15 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('200 OK (if JWT set correctly)', () => pm.expect([200, 401]).to.include(pm.response.code));"
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('yaml content type', () => {",
+              "  const ct = pm.response.headers.get('Content-Type') || '';",
+              "  pm.expect(ct.includes('yaml') || ct.includes('text/plain') || ct.includes('application/x-yaml')).to.equal(true);",
+              "});"
             ]
           }
         }
       ]
-    },
-    {
-      "name": "8. Create sandbox key — requires JWT",
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "Authorization", "value": "Bearer {{user_jwt}}" },
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"name\": \"my-sandbox-key\"\n}"
-        },
-        "url": { "raw": "{{base_url}}/api/keys", "host": ["{{base_url}}"], "path": ["api", "keys"] },
-        "description": "Free users: key_type=sandbox. Paid users: key_type=paid. Server enforces — do not send key_type yourself."
-      }
     }
   ]
 }
