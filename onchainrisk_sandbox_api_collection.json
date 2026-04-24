@@ -6,18 +6,52 @@
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "base_url", "value": "https://api.onchainrisk.io", "type": "string" },
-    { "key": "sandbox_api_key", "value": "ocr_live_REPLACE_ME", "type": "string", "description": "Your sandbox API key. Create one in the dashboard: https://onchainrisk.io/dashboard/api-keys" },
-    { "key": "sample_address", "value": "0xa39b189482f984388a34460636fea9eb181ad1a6", "type": "string", "description": "Light demo address — runs fast. Swap to your own for real integration testing." },
-    { "key": "user_address", "value": "0xREPLACE_ME_WITH_YOUR_ADDRESS", "type": "string", "description": "Your own address for Request 3." }
+    {
+      "key": "base_url",
+      "value": "https://api.onchainrisk.io",
+      "type": "string"
+    },
+    {
+      "key": "sandbox_api_key",
+      "value": "ocr_live_REPLACE_ME",
+      "type": "string",
+      "description": "Your sandbox API key. Create one in the dashboard: https://onchainrisk.io/dashboard/api-keys"
+    },
+    {
+      "key": "sample_address",
+      "value": "0xa39b189482f984388a34460636fea9eb181ad1a6",
+      "type": "string",
+      "description": "Light demo address — runs fast. Swap to your own for real integration testing."
+    },
+    {
+      "key": "user_address",
+      "value": "0xREPLACE_ME_WITH_YOUR_ADDRESS",
+      "type": "string",
+      "description": "Your own address for Request 3."
+    }
   ],
   "item": [
     {
       "name": "1. Auth sanity — GET /api/user/me",
       "request": {
         "method": "GET",
-        "header": [{ "key": "Authorization", "value": "Bearer {{sandbox_api_key}}" }],
-        "url": { "raw": "{{base_url}}/api/user/me", "host": ["{{base_url}}"], "path": ["api", "user", "me"] }
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/user/me",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "user",
+            "me"
+          ]
+        }
       },
       "event": [
         {
@@ -40,14 +74,30 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{sandbox_api_key}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\"\n}"
         },
-        "url": { "raw": "{{base_url}}/api/v1/check", "host": ["{{base_url}}"], "path": ["api", "v1", "check"] }
+        "url": {
+          "raw": "{{base_url}}/api/v1/check",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "check"
+          ]
+        }
       },
       "event": [
         {
@@ -68,6 +118,264 @@
               "pm.test('no analysisMode (omitted by policy)', () => pm.expect(d).to.not.have.property('analysisMode'));"
             ]
           }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Stable validation envelope: validation errors always 422 with",
+              "// success:false + error.code=VALIDATION_ERROR + details.errorCode.",
+              "// Added 2026-04-24 after the Tron/network mismatch incident.",
+              "// (Ref: docs/testing/fixtures/validation/*.json — same shape.)",
+              "pm.test('validation envelope is stable (422)', function () {",
+              "    if (pm.response.code !== 422) return;",
+              "    const body = pm.response.json();",
+              "    pm.expect(body).to.have.property('success', false);",
+              "    pm.expect(body.error).to.have.property('code', 'VALIDATION_ERROR');",
+              "    pm.expect(body.error).to.have.property('message');",
+              "    pm.expect(body.error).to.have.property('details');",
+              "    pm.expect(body.error.details).to.have.property('errorCode');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "response": [
+        {
+          "name": "422 ADDRESS_NETWORK_MISMATCH (Tron + network=eth)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"TLA2W3khvaLjZ7FQ3cwh1zHszVRV627cr5\",\n  \"network\": \"eth\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Address format does not match selected network. The address looks like a tron address, but network was set to eth.\",\n      \"errorCode\": \"ADDRESS_NETWORK_MISMATCH\",\n      \"detectedFamily\": \"tron\",\n      \"requestedNetwork\": \"eth\"\n    }\n  }\n}"
+        },
+        {
+          "name": "422 INVALID_ADDRESS (whitespace-only)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"   \",\n  \"network\": \"eth\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Address is required.\",\n      \"errorCode\": \"INVALID_ADDRESS\"\n    }\n  }\n}"
+        },
+        {
+          "name": "422 UNSUPPORTED_NETWORK (network=Ethereum)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"0x742d35Cc6634C0532925a3b844Bc454e4438f44e\",\n  \"network\": \"Ethereum\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Unsupported network 'ethereum'. Supported: arbitrum, avalanche, base, bsc, btc, cardano, celo, cosmos, cronos, eth, fantom, linea, ltc, moonbeam, optimism, polygon, polygon_zkevm, scroll, sol, ton, tron, xrp, zksync.\",\n      \"errorCode\": \"UNSUPPORTED_NETWORK\",\n      \"requestedNetwork\": \"ethereum\"\n    }\n  }\n}"
+        },
+        {
+          "name": "422 INVALID_ADDRESS_CHECKSUM (Tron bad Base58Check)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT\",\n  \"network\": \"tron\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Address failed tron checksum validation.\",\n      \"errorCode\": \"INVALID_ADDRESS_CHECKSUM\",\n      \"detectedFamily\": \"tron\",\n      \"requestedNetwork\": \"tron\"\n    }\n  }\n}"
+        },
+        {
+          "name": "422 COULD_NOT_DETECT_NETWORK (unrecognisable address)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"not_an_address_at_all_12345\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Could not detect network from address format. Please specify the network parameter.\",\n      \"errorCode\": \"COULD_NOT_DETECT_NETWORK\"\n    }\n  }\n}"
         }
       ]
     },
@@ -76,30 +384,323 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{sandbox_api_key}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"address\": \"{{user_address}}\",\n  \"network\": \"eth\"\n}"
         },
-        "url": { "raw": "{{base_url}}/api/v1/check", "host": ["{{base_url}}"], "path": ["api", "v1", "check"] },
+        "url": {
+          "raw": "{{base_url}}/api/v1/check",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "check"
+          ]
+        },
         "description": "Replace `user_address` env var with any address. Same sandbox shape as Request 2."
-      }
+      },
+      "response": [
+        {
+          "name": "422 ADDRESS_NETWORK_MISMATCH (Tron + network=eth)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"TLA2W3khvaLjZ7FQ3cwh1zHszVRV627cr5\",\n  \"network\": \"eth\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Address format does not match selected network. The address looks like a tron address, but network was set to eth.\",\n      \"errorCode\": \"ADDRESS_NETWORK_MISMATCH\",\n      \"detectedFamily\": \"tron\",\n      \"requestedNetwork\": \"eth\"\n    }\n  }\n}"
+        },
+        {
+          "name": "422 INVALID_ADDRESS (whitespace-only)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"   \",\n  \"network\": \"eth\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Address is required.\",\n      \"errorCode\": \"INVALID_ADDRESS\"\n    }\n  }\n}"
+        },
+        {
+          "name": "422 UNSUPPORTED_NETWORK (network=Ethereum)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"0x742d35Cc6634C0532925a3b844Bc454e4438f44e\",\n  \"network\": \"Ethereum\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Unsupported network 'ethereum'. Supported: arbitrum, avalanche, base, bsc, btc, cardano, celo, cosmos, cronos, eth, fantom, linea, ltc, moonbeam, optimism, polygon, polygon_zkevm, scroll, sol, ton, tron, xrp, zksync.\",\n      \"errorCode\": \"UNSUPPORTED_NETWORK\",\n      \"requestedNetwork\": \"ethereum\"\n    }\n  }\n}"
+        },
+        {
+          "name": "422 INVALID_ADDRESS_CHECKSUM (Tron bad Base58Check)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT\",\n  \"network\": \"tron\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Address failed tron checksum validation.\",\n      \"errorCode\": \"INVALID_ADDRESS_CHECKSUM\",\n      \"detectedFamily\": \"tron\",\n      \"requestedNetwork\": \"tron\"\n    }\n  }\n}"
+        },
+        {
+          "name": "422 COULD_NOT_DETECT_NETWORK (unrecognisable address)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"not_an_address_at_all_12345\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Could not detect network from address format. Please specify the network parameter.\",\n      \"errorCode\": \"COULD_NOT_DETECT_NETWORK\"\n    }\n  }\n}"
+        }
+      ],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Stable validation envelope: validation errors always 422 with",
+              "// success:false + error.code=VALIDATION_ERROR + details.errorCode.",
+              "// Added 2026-04-24 after the Tron/network mismatch incident.",
+              "// (Ref: docs/testing/fixtures/validation/*.json — same shape.)",
+              "pm.test('validation envelope is stable (422)', function () {",
+              "    if (pm.response.code !== 422) return;",
+              "    const body = pm.response.json();",
+              "    pm.expect(body).to.have.property('success', false);",
+              "    pm.expect(body.error).to.have.property('code', 'VALIDATION_ERROR');",
+              "    pm.expect(body.error).to.have.property('message');",
+              "    pm.expect(body.error).to.have.property('details');",
+              "    pm.expect(body.error.details).to.have.property('errorCode');",
+              "});"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "5. Blocked endpoint — /check/deep returns 403",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{sandbox_api_key}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\"\n}"
         },
-        "url": { "raw": "{{base_url}}/api/v1/check/deep", "host": ["{{base_url}}"], "path": ["api", "v1", "check", "deep"] },
+        "url": {
+          "raw": "{{base_url}}/api/v1/check/deep",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "check",
+            "deep"
+          ]
+        },
         "description": "Peel chain / deep analysis is a paid-tier feature. Sandbox keys receive 403 with upgrade pointer."
       },
       "event": [
@@ -121,14 +722,30 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{sandbox_api_key}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"address\": \"not-a-valid-address\",\n  \"network\": \"eth\"\n}"
         },
-        "url": { "raw": "{{base_url}}/api/v1/check", "host": ["{{base_url}}"], "path": ["api", "v1", "check"] }
+        "url": {
+          "raw": "{{base_url}}/api/v1/check",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "check"
+          ]
+        }
       },
       "event": [
         {
@@ -139,6 +756,264 @@
               "pm.test('400 on invalid address', () => pm.response.to.have.status(400));"
             ]
           }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Stable validation envelope: validation errors always 422 with",
+              "// success:false + error.code=VALIDATION_ERROR + details.errorCode.",
+              "// Added 2026-04-24 after the Tron/network mismatch incident.",
+              "// (Ref: docs/testing/fixtures/validation/*.json — same shape.)",
+              "pm.test('validation envelope is stable (422)', function () {",
+              "    if (pm.response.code !== 422) return;",
+              "    const body = pm.response.json();",
+              "    pm.expect(body).to.have.property('success', false);",
+              "    pm.expect(body.error).to.have.property('code', 'VALIDATION_ERROR');",
+              "    pm.expect(body.error).to.have.property('message');",
+              "    pm.expect(body.error).to.have.property('details');",
+              "    pm.expect(body.error.details).to.have.property('errorCode');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "response": [
+        {
+          "name": "422 ADDRESS_NETWORK_MISMATCH (Tron + network=eth)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"TLA2W3khvaLjZ7FQ3cwh1zHszVRV627cr5\",\n  \"network\": \"eth\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Address format does not match selected network. The address looks like a tron address, but network was set to eth.\",\n      \"errorCode\": \"ADDRESS_NETWORK_MISMATCH\",\n      \"detectedFamily\": \"tron\",\n      \"requestedNetwork\": \"eth\"\n    }\n  }\n}"
+        },
+        {
+          "name": "422 INVALID_ADDRESS (whitespace-only)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"   \",\n  \"network\": \"eth\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Address is required.\",\n      \"errorCode\": \"INVALID_ADDRESS\"\n    }\n  }\n}"
+        },
+        {
+          "name": "422 UNSUPPORTED_NETWORK (network=Ethereum)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"0x742d35Cc6634C0532925a3b844Bc454e4438f44e\",\n  \"network\": \"Ethereum\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Unsupported network 'ethereum'. Supported: arbitrum, avalanche, base, bsc, btc, cardano, celo, cosmos, cronos, eth, fantom, linea, ltc, moonbeam, optimism, polygon, polygon_zkevm, scroll, sol, ton, tron, xrp, zksync.\",\n      \"errorCode\": \"UNSUPPORTED_NETWORK\",\n      \"requestedNetwork\": \"ethereum\"\n    }\n  }\n}"
+        },
+        {
+          "name": "422 INVALID_ADDRESS_CHECKSUM (Tron bad Base58Check)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT\",\n  \"network\": \"tron\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Address failed tron checksum validation.\",\n      \"errorCode\": \"INVALID_ADDRESS_CHECKSUM\",\n      \"detectedFamily\": \"tron\",\n      \"requestedNetwork\": \"tron\"\n    }\n  }\n}"
+        },
+        {
+          "name": "422 COULD_NOT_DETECT_NETWORK (unrecognisable address)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"not_an_address_at_all_12345\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": \"VALIDATION_ERROR\",\n    \"details\": {\n      \"address\": \"Could not detect network from address format. Please specify the network parameter.\",\n      \"errorCode\": \"COULD_NOT_DETECT_NETWORK\"\n    }\n  }\n}"
         }
       ]
     },
@@ -147,7 +1022,15 @@
       "request": {
         "method": "GET",
         "header": [],
-        "url": { "raw": "{{base_url}}/openapi-sandbox.yaml", "host": ["{{base_url}}"], "path": ["openapi-sandbox.yaml"] },
+        "url": {
+          "raw": "{{base_url}}/openapi-sandbox.yaml",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "openapi-sandbox.yaml"
+          ]
+        },
         "description": "Raw OpenAPI 3.1 spec for code generators (openapi-generator, orval, etc.). No auth required."
       },
       "event": [
