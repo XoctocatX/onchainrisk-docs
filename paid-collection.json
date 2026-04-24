@@ -2,13 +2,12 @@
   "info": {
     "_postman_id": "onchainrisk-paid-v3",
     "name": "OnChainRisk Paid API",
-    "description": "Full OnChainRisk API for Pro, Business, and Enterprise plans.\n\n**Setup:**\n1. Sign up at https://onchainrisk.io/register and upgrade to Pro or higher\n2. Dashboard → API Keys → Create a paid API key\n3. Set env var `paid_api_key` to your key\n4. Open any folder below — the top ones (Account → Analysis → ... → Labels) are safe to explore; the bottom ones (⚠ Advanced, ⚠ Destructive, Reference: Authentication) need extra caution.\n\n**Scope:** mirrors https://api.onchainrisk.io/docs except for admin-only endpoints. A CI coverage script (`validate:paid-coverage`) checks no core endpoint drifts out of sync with the Swagger spec.\n\n**Folder conventions:**\n- `Account` → `Labels` — safe day-to-day paid API onboarding. All use `Authorization: Bearer {{paid_api_key}}`.\n- `⚠ Advanced` — billing operations, MEV scan trigger, settings resets. Not destructive, but requires intent.\n- `⚠ Destructive` — every DELETE and account deletion. Running any of these removes data.\n- `Reference: Authentication` — signup / login / 2FA / password change flows. Production requires a Cloudflare Turnstile CAPTCHA, so these are documented for schema reference; real auth is done via dashboard UI.\n\n**Auth:** all paid endpoints accept the same API key. Auth folder endpoints that mutate auth state (change-password, 2FA, account deletion) use the browser JWT (`user_jwt` env var) — grab it from dashboard localStorage if you need to run those.",
+    "description": "Full OnChainRisk API for Pro, Business, and Enterprise plans.\n\n**Setup:**\n1. Sign up at https://onchainrisk.io/register and upgrade to Pro or higher\n2. Dashboard → API Keys → Create a paid API key\n3. Set env var `paid_api_key` to your key\n4. Open any folder below — the top ones (Account → Analysis → ... → Labels) are safe to explore; the bottom ones (⚠ Advanced, ⚠ Destructive) need extra caution.\n\n**Authentication:** every request uses the same header: `Authorization: Bearer {{paid_api_key}}`. No JWT, no CAPTCHA, no separate flow for different endpoint groups.\n\n**Scope:** mirrors https://api.onchainrisk.io/docs for everything an external integrator can call with a paid API key. Signup / login / password reset / 2FA are intentionally not in this collection — they run in the dashboard UI (Turnstile CAPTCHA, JWT session) and are not part of the programmatic integration surface.\n\n**Folder conventions:**\n- `Account` → `Labels` — safe day-to-day paid API onboarding.\n- `⚠ Advanced` — billing operations, MEV scan trigger, settings resets. Not destructive, but requires intent.\n- `⚠ Destructive` — every DELETE and account deletion. Running any of these removes data.\n\nA CI coverage script (`validate:paid-coverage`) ensures no core endpoint drifts out of sync with the Swagger spec.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "base_url", "value": "https://api.onchainrisk.io", "type": "string" },
     { "key": "paid_api_key", "value": "ocr_live_REPLACE_ME", "type": "string", "description": "Paid API key (Pro+). Create at https://onchainrisk.io/dashboard/api-keys" },
-    { "key": "user_jwt", "value": "REPLACE_ME_IF_NEEDED", "type": "string", "description": "JWT from browser localStorage. Only needed for Reference: Authentication folder (change-password, 2FA) and for DELETE /api/user/account in Destructive folder." },
     { "key": "sample_address", "value": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", "type": "string", "description": "Vitalik — real data, explorable." },
     { "key": "user_address", "value": "0xREPLACE_ME_WITH_YOUR_ADDRESS", "type": "string" },
     { "key": "sample_token_address", "value": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "type": "string", "description": "USDC on Ethereum — safe honeypot/security test subject." },
@@ -53,7 +52,7 @@
     },
     {
       "key": "sample_payment_id", "value": "REPLACE_AFTER_UPGRADE", "type": "string",
-      "description": "Auto-populated when you run POST /api/billing/upgrade. Source: response.data.paymentId."
+      "description": "Reserved. Billing flows are dashboard-only — not exposed in this collection."
     }
   ],
   "item": [
@@ -947,7 +946,7 @@
     },
     {
       "name": "⚠ Advanced",
-      "description": "Not destructive, but require intent: billing operations that affect your subscription, MEV manual scan trigger (non-free compute), settings resets, notification tests.",
+      "description": "Not destructive, but require intent: triggers non-free compute, changes settings state.",
       "item": [
         {
           "name": "POST /api/v1/mev/scan/trigger — manual MEV scan",
@@ -960,85 +959,6 @@
             "body": { "mode": "raw", "raw": "{\n  \"network\": \"eth\"\n}" },
             "url": { "raw": "{{base_url}}/api/v1/mev/scan/trigger", "host": ["{{base_url}}"], "path": ["api", "v1", "mev", "scan", "trigger"] },
             "description": "Triggers a manual MEV scan. Non-free compute — use sparingly; cron typically handles this automatically."
-          }
-        },
-        {
-          "name": "POST /api/billing/upgrade — request upgrade",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": { "mode": "raw", "raw": "{\n  \"plan\": \"pro\",\n  \"billingPeriod\": \"monthly\"\n}" },
-            "url": { "raw": "{{base_url}}/api/billing/upgrade", "host": ["{{base_url}}"], "path": ["api", "billing", "upgrade"] }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.response.code === 200 || pm.response.code === 201) {",
-                  "  const d = pm.response.json().data;",
-                  "  if (d && d.paymentId) pm.collectionVariables.set('sample_payment_id', String(d.paymentId));",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "POST /api/billing/credits — buy credits",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": { "mode": "raw", "raw": "{\n  \"amount\": 100\n}" },
-            "url": { "raw": "{{base_url}}/api/billing/credits", "host": ["{{base_url}}"], "path": ["api", "billing", "credits"] }
-          }
-        },
-        {
-          "name": "POST /api/billing/verify — verify payment",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": { "mode": "raw", "raw": "{\n  \"paymentId\": \"{{sample_payment_id}}\",\n  \"txHash\": \"{{sample_tx_hash}}\",\n  \"network\": \"eth\"\n}" },
-            "url": { "raw": "{{base_url}}/api/billing/verify", "host": ["{{base_url}}"], "path": ["api", "billing", "verify"] }
-          }
-        },
-        {
-          "name": "GET /api/billing/subscription",
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
-            "url": { "raw": "{{base_url}}/api/billing/subscription", "host": ["{{base_url}}"], "path": ["api", "billing", "subscription"] }
-          }
-        },
-        {
-          "name": "GET /api/billing/history",
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
-            "url": { "raw": "{{base_url}}/api/billing/history", "host": ["{{base_url}}"], "path": ["api", "billing", "history"] }
-          }
-        },
-        {
-          "name": "GET /api/billing/refund/status",
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{paid_api_key}}" }],
-            "url": {
-              "raw": "{{base_url}}/api/billing/refund/status?paymentId={{sample_payment_id}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "billing", "refund", "status"],
-              "query": [{ "key": "paymentId", "value": "{{sample_payment_id}}" }]
-            }
           }
         }
       ]
@@ -1130,140 +1050,16 @@
           }
         },
         {
-          "name": "POST /api/billing/refund/request",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": { "mode": "raw", "raw": "{\n  \"paymentId\": \"{{sample_payment_id}}\",\n  \"reason\": \"requested within policy window\",\n  \"refundAddress\": \"0x...\"\n}" },
-            "url": { "raw": "{{base_url}}/api/billing/refund/request", "host": ["{{base_url}}"], "path": ["api", "billing", "refund", "request"] },
-            "description": "Requests a refund on a past payment. Refunds are processed manually after approval."
-          }
-        },
-        {
           "name": "DELETE /api/user/account — permanently delete account",
           "request": {
             "method": "DELETE",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{user_jwt}}" },
+              { "key": "Authorization", "value": "Bearer {{paid_api_key}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
             "body": { "mode": "raw", "raw": "{\n  \"password\": \"your-password\"\n}" },
             "url": { "raw": "{{base_url}}/api/user/account", "host": ["{{base_url}}"], "path": ["api", "user", "account"] },
-            "description": "PERMANENT. Deletes the user, all API keys, all saved reports. Uses browser JWT (user_jwt) rather than API key because this operation also revokes the API keys themselves."
-          }
-        }
-      ]
-    },
-    {
-      "name": "Reference: Authentication (CAPTCHA required)",
-      "description": "Auth surface for schema reference only. Production register / login / forgot flows require a Cloudflare Turnstile CAPTCHA token. The dashboard at https://onchainrisk.io handles these flows interactively; direct Postman calls typically fail CAPTCHA validation unless you extract a valid token from a browser session. Kept here so integrators can inspect the expected request/response shapes for their own auth UI.",
-      "item": [
-        {
-          "name": "POST /api/auth/register",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{sample_email}}\",\n  \"password\": \"StrongPass123!\",\n  \"turnstileToken\": \"required_in_production\"\n}" },
-            "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] }
-          }
-        },
-        {
-          "name": "POST /api/auth/login",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{sample_email}}\",\n  \"password\": \"StrongPass123!\",\n  \"turnstileToken\": \"required_in_production\"\n}" },
-            "url": { "raw": "{{base_url}}/api/auth/login", "host": ["{{base_url}}"], "path": ["api", "auth", "login"] }
-          }
-        },
-        {
-          "name": "GET /api/auth/verify — confirm email",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/auth/verify?token=from-verification-email",
-              "host": ["{{base_url}}"],
-              "path": ["api", "auth", "verify"],
-              "query": [{ "key": "token", "value": "from-verification-email" }]
-            }
-          }
-        },
-        {
-          "name": "POST /api/auth/forgot",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{sample_email}}\"\n}" },
-            "url": { "raw": "{{base_url}}/api/auth/forgot", "host": ["{{base_url}}"], "path": ["api", "auth", "forgot"] }
-          }
-        },
-        {
-          "name": "POST /api/auth/reset",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"token\": \"from-reset-email\",\n  \"newPassword\": \"NewPass123!\"\n}" },
-            "url": { "raw": "{{base_url}}/api/auth/reset", "host": ["{{base_url}}"], "path": ["api", "auth", "reset"] }
-          }
-        },
-        {
-          "name": "POST /api/auth/change-password",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{user_jwt}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": { "mode": "raw", "raw": "{\n  \"currentPassword\": \"current\",\n  \"newPassword\": \"NewPass123!\"\n}" },
-            "url": { "raw": "{{base_url}}/api/auth/change-password", "host": ["{{base_url}}"], "path": ["api", "auth", "change-password"] }
-          }
-        },
-        {
-          "name": "POST /api/auth/2fa/setup",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{user_jwt}}" }],
-            "url": { "raw": "{{base_url}}/api/auth/2fa/setup", "host": ["{{base_url}}"], "path": ["api", "auth", "2fa", "setup"] }
-          }
-        },
-        {
-          "name": "POST /api/auth/2fa/verify-setup",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{user_jwt}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": { "mode": "raw", "raw": "{\n  \"code\": \"123456\"\n}" },
-            "url": { "raw": "{{base_url}}/api/auth/2fa/verify-setup", "host": ["{{base_url}}"], "path": ["api", "auth", "2fa", "verify-setup"] }
-          }
-        },
-        {
-          "name": "POST /api/auth/2fa/verify",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{user_jwt}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": { "mode": "raw", "raw": "{\n  \"code\": \"123456\"\n}" },
-            "url": { "raw": "{{base_url}}/api/auth/2fa/verify", "host": ["{{base_url}}"], "path": ["api", "auth", "2fa", "verify"] }
-          }
-        },
-        {
-          "name": "POST /api/auth/2fa/disable",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{user_jwt}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": { "mode": "raw", "raw": "{\n  \"password\": \"your-password\"\n}" },
-            "url": { "raw": "{{base_url}}/api/auth/2fa/disable", "host": ["{{base_url}}"], "path": ["api", "auth", "2fa", "disable"] }
+            "description": "PERMANENT. Deletes the user, all API keys, all saved reports. Password confirmation required. After success, the API key you authenticated with is also invalidated."
           }
         }
       ]
