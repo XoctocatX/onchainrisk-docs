@@ -1,0 +1,2123 @@
+openapi: 3.1.0
+info:
+  title: OnChainRisk API
+  description: |
+    **[⬇ Download OpenAPI spec (YAML)](/openapi.yaml)** — for codegen tools (openapi-generator, orval, etc.)
+
+    ---
+
+    Blockchain forensics and wallet risk analysis API. Analyze addresses, trace transactions, detect honeypot tokens, and investigate blockchain activity across 23 networks.
+
+    ## Authentication
+
+    Authenticate with an API key. Create keys in [API Keys](https://onchainrisk.io/dashboard/api-keys) (requires Pro plan or above).
+
+    Send your key in the `Authorization` header:
+    ```
+    Authorization: Bearer ocr_live_...
+    ```
+
+    ## Rate Limits
+
+    | Plan | Checks/month | AI Investigations/month | API Access |
+    |------|-------------|------------------------|------------|
+    | Free | 25 | 3 | No |
+    | Pro | 500 | 50 | Yes (10 req/s) |
+    | Business | 2,000 | 200 | Yes (50 req/s) |
+    | Enterprise | Unlimited | Unlimited | Yes (custom) |
+
+    Rate limit headers are included in check responses:
+    - `X-RateLimit-Limit` — Monthly limit
+    - `X-RateLimit-Remaining` — Remaining checks
+    - `X-Credits-Remaining` — Purchased credits remaining
+
+    ## Validation errors
+
+    Address validation runs before any blockchain scan. On failure the Worker
+    returns **HTTP 422** (not 400) with the following stable envelope:
+
+    ```json
+    {
+      "success": false,
+      "error": {
+        "message": "Validation failed",
+        "code": "VALIDATION_ERROR",
+        "details": {
+          "address": "Address format does not match selected network. The address looks like a tron address, but network was set to eth.",
+          "errorCode": "ADDRESS_NETWORK_MISMATCH",
+          "detectedFamily": "tron",
+          "requestedNetwork": "eth"
+        }
+      }
+    }
+    ```
+
+    `error.code` is always `VALIDATION_ERROR` for this class. The granular
+    reason lives in `error.details.errorCode`:
+
+    | `errorCode`                   | When                                                                             |
+    |-------------------------------|----------------------------------------------------------------------------------|
+    | `INVALID_ADDRESS`             | empty, wrong format, whitespace-only                                             |
+    | `UNSUPPORTED_NETWORK`         | `network` not in the supported list                                              |
+    | `COULD_NOT_DETECT_NETWORK`    | address format unrecognised AND `network` omitted                                |
+    | `INVALID_ADDRESS_CHECKSUM`    | decode succeeded, family checksum failed (Tron / BTC-legacy / LTC-legacy). Solana decode failures surface as `INVALID_ADDRESS` because Solana is not checksum-based. |
+    | `ADDRESS_NETWORK_MISMATCH`    | detected address family inconsistent with requested `network`                    |
+
+    `detectedFamily` and `requestedNetwork` are present only when they add
+    useful diagnostic context; both may be `null` or absent.
+
+    ## Supported Networks (23)
+
+    | Network | Code | Type |
+    |---------|------|------|
+    | Ethereum | `eth` | Layer 1 |
+    | BNB Smart Chain | `bsc` | Layer 1 |
+    | Tron | `tron` | Layer 1 |
+    | Bitcoin | `btc` | Layer 1 |
+    | Solana | `sol` | Layer 1 |
+    | TON | `ton` | Layer 1 |
+    | Litecoin | `ltc` | Layer 1 |
+    | Arbitrum | `arbitrum` | Layer 2 |
+    | Optimism | `optimism` | Layer 2 |
+    | Base | `base` | Layer 2 |
+    | Polygon | `polygon` | Layer 2 |
+    | Avalanche | `avalanche` | Layer 1 |
+    | Linea | `linea` | Layer 2 |
+    | zkSync Era | `zksync` | Layer 2 |
+    | Scroll | `scroll` | Layer 2 |
+    | Celo | `celo` | Layer 1 |
+    | Cronos | `cronos` | Layer 1 |
+    | Fantom | `fantom` | Layer 1 |
+    | Moonbeam | `moonbeam` | Parachain |
+    | Polygon zkEVM | `polygon-zkevm` | Layer 2 |
+    | Cosmos | `cosmos` | Layer 1 |
+    | Cardano | `cardano` | Layer 1 |
+    | XRP | `xrp` | Layer 1 |
+
+    ## Credits
+
+    When monthly quota is exhausted, purchased credits are used automatically.
+    - Check credits: 1 credit = 1 address/token/block analysis
+    - AI credits: 1 credit = 1 AI investigation (separate pool)
+    - Multi-chain full analysis: 5 check credits
+    - Graph expansion: FREE (unlimited)
+
+  version: 2.0.0
+  contact:
+    name: OnChainRisk Support
+    url: https://onchainrisk.io/dashboard/support
+    email: admin@onchainrisk.io
+
+servers:
+  - url: https://api.onchainrisk.io
+    description: Production API
+
+tags:
+  - name: Analysis
+    description: Address risk analysis, token check, block analysis
+  - name: Multi-Chain
+    description: Multi-chain wallet scan and full analysis
+  - name: Reports
+    description: Saved reports CRUD and graph state
+  - name: Sharing
+    description: Public share tokens for reports
+  - name: Saved Reports
+    description: Token / block / multichain report persistence
+  - name: AI Investigation
+    description: AI-powered blockchain investigation agent
+  - name: Watchlist
+    description: Address monitoring and alerts
+  - name: Graph
+    description: Counterparty expansion and CSV import
+  - name: MEV
+    description: MEV bot stats, aggregate metrics, manual scan trigger
+  - name: Labels
+    description: Custom address labels + bulk import/export
+  - name: Notifications
+    description: Notification channel preferences (email, Telegram, webhook)
+  - name: Account
+    description: User profile, usage, settings, branding, layout
+  - name: Billing
+    description: Plan upgrades, credit purchases, payment verification, refunds
+  - name: Support
+    description: Support ticket creation and tracking
+  - name: API Keys
+    description: API key management
+
+paths:
+  # ── Analysis ──────────────────────────────────────────
+  /api/v1/check:
+    post:
+      tags: [Analysis]
+      summary: Analyze address risk
+      description: |
+        Submit an address for full risk analysis. Returns risk score (0-100), pattern flags, counterparties, timing analysis, cross-chain activity, and more. Network is auto-detected from address format, or specify explicitly. Costs 1 check credit.
+      security:
+        - apiKeyAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  type: string
+                  description: Wallet or contract address
+                  example: "0x742d35CC6634C0532925a3b844bc454e4438F44e"
+                network:
+                  type: string
+                  description: Network code (auto-detected if omitted)
+                  enum: [eth, bsc, tron, btc, ltc, sol, ton, arbitrum, optimism, base, polygon, avalanche, linea, zksync, scroll, celo, cronos, fantom, moonbeam, polygon-zkevm, cosmos, cardano, xrp]
+                  example: eth
+      responses:
+        '200':
+          description: Analysis result
+          headers:
+            X-RateLimit-Limit:
+              schema: { type: integer }
+            X-RateLimit-Remaining:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisResult'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          description: Rate limit exceeded
+        '503':
+          description: Analysis temporarily unavailable
+
+  /api/v1/check/{address}:
+    get:
+      tags: [Analysis]
+      summary: Fetch cached analysis (GET)
+      description: |
+        Returns a cached report for the address if one exists. Does not consume your quota. To force a fresh analysis (e.g. after new transactions), set `force=true` — this will call the analyzer and count as a new check. Add `?network=eth` to specify network.
+      security:
+        - apiKeyAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema: { type: string }
+        - name: network
+          in: query
+          schema: { type: string }
+        - name: force
+          in: query
+          description: Force fresh analysis instead of returning cache. Counts as a new check.
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisResult'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+
+  /api/v1/check/deep:
+    post:
+      tags: [Analysis]
+      summary: Deep analysis (peel chain detection)
+      description: Trace transaction origin through intermediary wallets. Detects peel chains and fund splitting. Costs 1 check credit.
+      security:
+        - apiKeyAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, network]
+              properties:
+                address: { type: string }
+                network: { type: string }
+                reportId: { type: string, description: "Attach result to existing report" }
+      responses:
+        '200':
+          description: Peel chain result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  peelChain:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        address: { type: string }
+                        label: { type: string, nullable: true }
+                        riskLevel: { type: string }
+                        depth: { type: integer }
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+
+  /api/v1/token/check:
+    post:
+      tags: [Analysis]
+      summary: Token security check (honeypot detection)
+      description: |
+        Analyze an ERC-20 token contract for honeypot risk, sell tax, blacklist functions, ownership concentration, and liquidity. Simulates buy/sell transactions. Costs 1 check credit.
+      security:
+        - apiKeyAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, network]
+              properties:
+                address: { type: string, description: "Token contract address" }
+                network: { type: string, enum: [eth, bsc, arbitrum, optimism, base, polygon, avalanche, linea, zksync, scroll, celo, cronos, fantom, moonbeam, polygon-zkevm] }
+      responses:
+        '200':
+          description: Token security analysis
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sections:
+                    type: object
+                    description: "Security checks: ownership, mint, fee, blacklist, proxy, liquidity, holders"
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+
+  /api/v1/token/check/stream:
+    post:
+      tags: [Analysis]
+      summary: Token check (SSE streaming)
+      description: Same as `/api/v1/token/check` but returns results progressively via Server-Sent Events as each section completes.
+      security:
+        - apiKeyAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, network]
+              properties:
+                address: { type: string }
+                network: { type: string }
+      responses:
+        '200':
+          description: SSE stream of section results
+          content:
+            text/event-stream: {}
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+
+  /api/v1/block/analyze:
+    post:
+      tags: [Analysis]
+      summary: Block MEV analysis
+      description: |
+        Analyze all transactions in a block for MEV patterns: sandwich attacks, arbitrage, flash loans, JIT liquidity, and liquidations. Supports 10 EVM networks. Costs 1 check credit.
+      security:
+        - apiKeyAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [blockNumber, network]
+              properties:
+                blockNumber: { type: integer, minimum: 0 }
+                network: { type: string, enum: [eth, bsc, arbitrum, optimism, base, polygon, avalanche, scroll, linea, zksync] }
+      responses:
+        '200':
+          description: Block analysis with MEV detection
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  blockNumber: { type: integer }
+                  timestamp: { type: integer }
+                  sandwiches: { type: array, items: { type: object } }
+                  arbitrages: { type: array, items: { type: object } }
+
+  /api/v1/check/status/{id}:
+    get:
+      tags: [Analysis]
+      summary: Poll async scan status
+      description: |
+        Check the status of an asynchronous scan job. Returns current phase, progress, and result when complete. Use after receiving a 202 from `/api/v1/check`.
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Report ID returned from the initial check request
+          schema: { type: string }
+      responses:
+        '200':
+          description: Scan status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [queued, processing, complete, failed] }
+                  phase: { type: string, nullable: true, description: "Current analysis phase" }
+                  reportId: { type: string }
+                  result:
+                    $ref: '#/components/schemas/AnalysisResult'
+                  error: { type: string, nullable: true }
+        '404':
+          description: Report not found
+
+  # Internal endpoints intentionally NOT documented here:
+  # - /api/analyze/estimate — Modal preflight called by Worker internally; Worker
+  #   does not route this path at api.onchainrisk.io (direct external calls 404).
+  # - /api/v1/telemetry/archetype — dashboard client telemetry for AI archetype
+  #   learning loop; not part of the public integration API.
+  # - /api/admin/* — internal surface
+  # - /api/notifications/telegram/callback — Telegram server-to-server webhook
+
+  # ── Multi-Chain ───────────────────────────────────────
+  /api/v1/multichain/scan:
+    post:
+      tags: [Multi-Chain]
+      summary: Quick multi-chain scan
+      description: Scan one address across 15 EVM networks in parallel. Returns balances, transaction counts, and active chains. Costs 1 check credit.
+      security:
+        - apiKeyAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: { type: string, description: "EVM address (0x...)" }
+      responses:
+        '200':
+          description: Multi-chain scan result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  address: { type: string }
+                  activeChains: { type: integer }
+                  totalChains: { type: integer }
+                  chains: { type: array, items: { type: object } }
+
+  /api/v1/multichain/analyze:
+    post:
+      tags: [Multi-Chain]
+      summary: Full multi-chain risk analysis
+      description: |
+        Run full risk analysis on each active network. Background job with progress polling. Returns composite risk score and per-network breakdown. Costs 5 check credits.
+      security:
+        - apiKeyAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, networks]
+              properties:
+                address: { type: string }
+                networks: { type: array, items: { type: string } }
+      responses:
+        '202':
+          description: Analysis started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reportId: { type: integer }
+                  status: { type: string, enum: [analyzing] }
+                  cost: { type: integer, example: 5 }
+
+  /api/v1/multichain/analyze/{reportId}:
+    get:
+      tags: [Multi-Chain]
+      summary: Poll analysis progress
+      security:
+        - apiKeyAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Progress status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [analyzing, complete, failed] }
+                  networks: { type: object }
+                  compositeRiskScore: { type: integer }
+
+  # ── AI Investigation ──────────────────────────────────
+  /api/investigate:
+    post:
+      tags: [AI Investigation]
+      summary: Start or continue AI investigation
+      description: |
+        Send a message to the AI investigation agent. Returns SSE stream with analysis steps, tool calls, and results. Costs 1 AI investigation credit (when creating new investigation).
+      security:
+        - apiKeyAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string, maxLength: 5000 }
+                investigationId: { type: integer, description: "Continue existing investigation" }
+                reportId: { type: string, description: "Reference existing report" }
+                byoKey: { type: string, description: "Bring-your-own Claude API key" }
+      responses:
+        '200':
+          description: SSE stream of investigation events
+          content:
+            text/event-stream: {}
+
+  /api/investigations:
+    get:
+      tags: [AI Investigation]
+      summary: List investigations
+      security:
+        - apiKeyAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated investigations list
+
+  # ── Reports ───────────────────────────────────────────
+  /api/reports:
+    get:
+      tags: [Reports]
+      summary: List saved reports
+      security:
+        - apiKeyAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated reports
+
+  /api/reports/{id}:
+    get:
+      tags: [Reports]
+      summary: Get report
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Full report data
+    patch:
+      tags: [Reports]
+      summary: Rename report
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 200 }
+      responses:
+        '200': { description: Report renamed }
+    delete:
+      tags: [Reports]
+      summary: Delete report
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Deleted
+
+  /api/reports/{reportId}/snapshots:
+    get:
+      tags: [Reports]
+      summary: List graph state snapshots for a report
+      description: |
+        Returns metadata for all saved graph snapshots on a report (no graphData). Sorted by `updated_at` DESC.
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          description: Report public_id
+          schema: { type: string }
+      responses:
+        '200':
+          description: List of snapshot metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  snapshots:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GraphSnapshot'
+        '404':
+          description: Report not found
+    post:
+      tags: [Reports]
+      summary: Create a graph state snapshot
+      description: |
+        Persist the current graph state as a named snapshot. Validation:
+        - `name`: required, trimmed, 1–100 chars
+        - `description`: optional, trimmed, max 500 chars (empty → null)
+        - `graphData`: required, must contain `nodes[]` and `edges[]` arrays
+        - Size: max 500 KB serialized
+        - Limit: max 10 snapshots per report (returns `SNAPSHOT_LIMIT` error when full)
+
+        Server computes `node_count` and `edge_count` — client values ignored.
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, graphData]
+              properties:
+                name: { type: string, maxLength: 100, example: "After expanding counterparties" }
+                description: { type: string, maxLength: 500, nullable: true }
+                graphData:
+                  type: object
+                  required: [nodes, edges]
+                  properties:
+                    nodes: { type: array, items: { type: object } }
+                    edges: { type: array, items: { type: object } }
+      responses:
+        '201':
+          description: Snapshot created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphSnapshot'
+        '400':
+          description: Validation error (missing name, invalid graphData, oversize, etc.)
+        '409':
+          description: Snapshot limit reached (code `SNAPSHOT_LIMIT`)
+
+  /api/reports/{reportId}/snapshots/{snapshotId}:
+    get:
+      tags: [Reports]
+      summary: Get full graph snapshot (with graphData)
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: snapshotId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Full snapshot including graphData
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphSnapshotFull'
+        '404':
+          description: Snapshot not found
+    patch:
+      tags: [Reports]
+      summary: Rename or update description of a snapshot
+      description: |
+        Updates `name` and/or `description` only. `graphData` is ignored if sent. Server sets `updated_at = unixepoch()`.
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: snapshotId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 100 }
+                description: { type: string, maxLength: 500, nullable: true }
+      responses:
+        '200':
+          description: Updated snapshot metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphSnapshot'
+        '404':
+          description: Snapshot not found
+    delete:
+      tags: [Reports]
+      summary: Delete a graph snapshot
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: snapshotId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Deleted
+        '404':
+          description: Snapshot not found
+
+  /api/reports/{id}/share:
+    post:
+      tags: [Sharing]
+      summary: Create share link
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expiresIn: { type: integer, description: "Hours (1-720)" }
+      responses:
+        '200':
+          description: Share token and URL
+    get:
+      tags: [Sharing]
+      summary: Get share status for a report
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Share status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  token: { type: [string, 'null'] }
+                  url: { type: [string, 'null'] }
+                  expiresAt: { type: [integer, 'null'] }
+    delete:
+      tags: [Sharing]
+      summary: Revoke share token
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Share link revoked }
+
+  # ── Watchlist ─────────────────────────────────────────
+  /api/watchlist:
+    get:
+      tags: [Watchlist]
+      summary: List watchlist items
+      security:
+        - apiKeyAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Watchlist items with alert counts
+    post:
+      tags: [Watchlist]
+      summary: Add address to watchlist
+      description: |
+        Monitor an address for new transactions. Alerts delivered via email, Telegram, or webhook. Checked every 5 minutes.
+      security:
+        - apiKeyAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, network]
+              properties:
+                address: { type: string }
+                network: { type: string }
+                label: { type: string }
+                threshold_value: { type: number, description: "Min value to alert" }
+                notify_email: { type: boolean, default: true }
+                notify_telegram: { type: boolean, default: false }
+                notify_webhook: { type: boolean, default: false }
+      responses:
+        '201':
+          description: Watchlist item created
+
+  # ── API Keys ──────────────────────────────────────────
+  /api/keys:
+    get:
+      tags: [API Keys]
+      summary: List API keys
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: API keys (prefix only, not full key)
+    post:
+      tags: [API Keys]
+      summary: Create API key
+      description: Returns the full key only once. Store it securely.
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, default: "API Key" }
+      responses:
+        '200':
+          description: New API key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+                  key: { type: string, example: "ocr_live_abc123..." }
+                  prefix: { type: string }
+
+  /api/keys/{id}:
+    delete:
+      tags: [API Keys]
+      summary: Revoke API key
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Key revoked
+
+
+  # ── Account ───────────────────────────────────────────
+  /api/user/me:
+    get:
+      tags: [Account]
+      summary: Get current user profile
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+                  email: { type: string }
+                  plan: { type: string, enum: [free, pro, business, enterprise] }
+                  emailVerified: { type: boolean }
+                  createdAt: { type: integer }
+                  lastLoginAt: { type: [integer, 'null'] }
+                  totpEnabled: { type: boolean }
+                  credits: { type: integer }
+                  aiCredits: { type: integer }
+                  planLimits:
+                    type: object
+                    properties:
+                      queries: { type: integer }
+                      period: { type: string, enum: [daily, monthly] }
+
+  /api/user/usage:
+    get:
+      tags: [Account]
+      summary: Get current usage and quota
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Quota status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plan: { type: string }
+                  period: { type: string, enum: [daily, monthly] }
+                  queriesUsed: { type: integer }
+                  queriesLimit: { type: integer }
+                  queriesRemaining: { type: integer }
+                  credits: { type: integer }
+                  periodStart: { type: [integer, 'null'] }
+                  periodEnd: { type: [integer, 'null'] }
+                  resetsAt: { type: [integer, 'null'] }
+
+  /api/user/account:
+    delete:
+      tags: [Account]
+      summary: Delete account permanently
+      description: Irreversible. Requires password confirmation. After success, the API key used for this call is invalidated along with all other user API keys.
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        '200': { description: Account deleted }
+        '401': { description: Password incorrect }
+
+  /api/user/risk-settings:
+    get:
+      tags: [Account]
+      summary: Get custom risk scoring settings
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Risk settings or null if defaults
+          content:
+            application/json:
+              schema:
+                type: [object, 'null']
+                properties:
+                  weights: { type: object, additionalProperties: { type: number } }
+                  overrides: { type: object }
+    patch:
+      tags: [Account]
+      summary: Update custom risk scoring settings
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                weights: { type: object, additionalProperties: { type: number } }
+                overrides: { type: object }
+      responses:
+        '200': { description: Settings saved }
+    delete:
+      tags: [Account]
+      summary: Reset risk settings to defaults
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200': { description: Reset to defaults }
+
+  /api/user/branding:
+    get:
+      tags: [Account]
+      summary: Get white-label branding settings
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Branding config
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logoUrl: { type: [string, 'null'] }
+                  primaryColor: { type: [string, 'null'] }
+                  companyName: { type: [string, 'null'] }
+                  footerText: { type: [string, 'null'] }
+    patch:
+      tags: [Account]
+      summary: Update white-label branding
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                logoUrl: { type: string }
+                primaryColor: { type: string, description: "Hex color e.g. #1a73e8" }
+                companyName: { type: string }
+                footerText: { type: string }
+      responses:
+        '200': { description: Branding updated }
+    delete:
+      tags: [Account]
+      summary: Reset branding to defaults
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200': { description: Branding reset }
+
+  /api/user/report-layout:
+    get:
+      tags: [Account]
+      summary: Get user report section order
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Section order
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sectionOrder: { type: array, items: { type: string } }
+    patch:
+      tags: [Account]
+      summary: Update report section order
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sectionOrder]
+              properties:
+                sectionOrder: { type: array, items: { type: string } }
+      responses:
+        '200': { description: Layout saved }
+    delete:
+      tags: [Account]
+      summary: Reset report layout to defaults
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200': { description: Layout reset }
+
+  # ── Labels ────────────────────────────────────────────
+  /api/labels:
+    get:
+      tags: [Labels]
+      summary: List user custom labels
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: User labels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: integer }
+                    address: { type: string }
+                    network: { type: string }
+                    label: { type: string }
+                    category: { type: string }
+                    notes: { type: [string, 'null'] }
+                    createdAt: { type: integer }
+    post:
+      tags: [Labels]
+      summary: Create a custom label
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, network, label, category]
+              properties:
+                address: { type: string }
+                network: { type: string }
+                label: { type: string, maxLength: 100 }
+                category: { type: string }
+                notes: { type: string, maxLength: 500 }
+      responses:
+        '201':
+          description: Label created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+
+  /api/labels/{id}:
+    patch:
+      tags: [Labels]
+      summary: Update a label
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label: { type: string, maxLength: 100 }
+                category: { type: string }
+                notes: { type: string, maxLength: 500 }
+      responses:
+        '200': { description: Label updated }
+        '404': { description: Label not found }
+    delete:
+      tags: [Labels]
+      summary: Delete a label
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Label deleted }
+        '404': { description: Label not found }
+
+  /api/labels/import:
+    post:
+      tags: [Labels]
+      summary: Bulk import labels
+      description: Bulk-create labels. Duplicates (same address+network) are skipped.
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [labels]
+              properties:
+                labels:
+                  type: array
+                  items:
+                    type: object
+                    required: [address, network, label, category]
+                    properties:
+                      address: { type: string }
+                      network: { type: string }
+                      label: { type: string }
+                      category: { type: string }
+      responses:
+        '200':
+          description: Import result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imported: { type: integer }
+                  skipped: { type: integer }
+
+  /api/labels/export:
+    get:
+      tags: [Labels]
+      summary: Export all user labels
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: JSON array of all user labels
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object }
+
+  # ── Notifications ─────────────────────────────────────
+  /api/notifications/settings:
+    get:
+      tags: [Notifications]
+      summary: Get notification settings
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Notification preferences
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  email_enabled: { type: boolean }
+                  telegram_enabled: { type: boolean }
+                  telegram_chat_id: { type: [string, 'null'] }
+                  webhook_url: { type: [string, 'null'] }
+                  webhook_enabled: { type: boolean }
+    patch:
+      tags: [Notifications]
+      summary: Update notification settings
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email_enabled: { type: boolean }
+                webhook_url: { type: string, format: uri }
+                webhook_enabled: { type: boolean }
+      responses:
+        '200': { description: Settings saved }
+
+  /api/notifications/test:
+    post:
+      tags: [Notifications]
+      summary: Send test notification
+      description: Sends a test alert through all enabled channels (email, telegram, webhook).
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Test dispatched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  email: { type: string, enum: [sent, skipped, failed] }
+                  telegram: { type: string, enum: [sent, skipped, failed] }
+                  webhook: { type: string, enum: [sent, skipped, failed] }
+
+  /api/notifications/telegram/connect:
+    post:
+      tags: [Notifications]
+      summary: Connect Telegram chat
+      description: Submit chat ID obtained by messaging the OnChainRisk bot with /start and copying the code it returns.
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chatId]
+              properties:
+                chatId: { type: string }
+      responses:
+        '200': { description: Telegram linked }
+        '400': { description: Invalid chat ID }
+
+  /api/notifications/telegram/disconnect:
+    post:
+      tags: [Notifications]
+      summary: Disconnect Telegram
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200': { description: Telegram unlinked }
+
+  # ── Watchlist (extra) ─────────────────────────────────
+  /api/watchlist/{id}:
+    patch:
+      tags: [Watchlist]
+      summary: Update watchlist item
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label: { type: string }
+                notify_email: { type: boolean }
+                notify_telegram: { type: boolean }
+                notify_webhook: { type: boolean }
+                threshold_value: { type: number }
+      responses:
+        '200': { description: Item updated }
+        '404': { description: Item not found }
+    delete:
+      tags: [Watchlist]
+      summary: Remove from watchlist
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Item removed }
+
+  /api/watchlist/{id}/alerts:
+    get:
+      tags: [Watchlist]
+      summary: Alerts for a single watchlist item
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          description: Paginated alerts for this item
+
+  /api/alerts:
+    get:
+      tags: [Watchlist]
+      summary: All alerts across user's watchlist
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+        - name: unread
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Paginated alerts
+
+  # ── Graph ─────────────────────────────────────────────
+  /api/graph/expand:
+    post:
+      tags: [Graph]
+      summary: Expand graph counterparties for an address
+      description: Fetches direct counterparties for the given address and returns nodes/edges to merge into the client graph. Costs 1 credit.
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, network]
+              properties:
+                address: { type: string }
+                network: { type: string }
+                depth: { type: integer, default: 1, maximum: 2 }
+      responses:
+        '200':
+          description: Expanded subgraph
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nodes: { type: array, items: { type: object } }
+                  edges: { type: array, items: { type: object } }
+                  creditsRemaining: { type: integer }
+
+  /api/graph/csv-import:
+    post:
+      tags: [Graph]
+      summary: Import CSV of transactions into a report graph
+      description: Parses CSV (Etherscan-style export) and merges rows into the report's graph. Triggers full graph reboot in the UI.
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reportId, csv]
+              properties:
+                reportId: { type: string }
+                csv: { type: string, description: "Raw CSV text" }
+      responses:
+        '200':
+          description: Import result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rowsParsed: { type: integer }
+                  nodesAdded: { type: integer }
+                  edgesAdded: { type: integer }
+        '400': { description: CSV parse error }
+
+  # ── Reports (graph cache) ─────────────────────────────
+  /api/reports/{id}/graph:
+    get:
+      tags: [Reports]
+      summary: Get cached working graph for a report
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Cached graph data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nodes: { type: array, items: { type: object } }
+                  edges: { type: array, items: { type: object } }
+                  updatedAt: { type: integer }
+    patch:
+      tags: [Reports]
+      summary: Update cached working graph
+      description: Persist user's current working graph state (post-expand, post-prune). Overwrites previous cache.
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [graphData]
+              properties:
+                graphData:
+                  type: object
+                  required: [nodes, edges]
+                  properties:
+                    nodes: { type: array, items: { type: object } }
+                    edges: { type: array, items: { type: object } }
+      responses:
+        '200': { description: Graph saved }
+        '400': { description: Validation error (shape or size) }
+
+  # ── Sharing (public) ──────────────────────────────────
+  /api/share/{token}:
+    get:
+      tags: [Sharing]
+      summary: Public report view by share token
+      description: No authentication required. Returns the report if the share link is active and not expired.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Public report data
+        '404': { description: Share link not found or expired }
+
+  /api/share/{token}/graph:
+    get:
+      tags: [Sharing]
+      summary: Public graph view by share token
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Public graph data
+        '404': { description: Share link not found or expired }
+
+  # ── Saved Reports ─────────────────────────────────────
+  /api/v1/token/reports:
+    post:
+      tags: [Saved Reports]
+      summary: Save a token security report
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, network, reportData]
+              properties:
+                address: { type: string }
+                network: { type: string }
+                reportData: { type: object }
+      responses:
+        '201':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+    get:
+      tags: [Saved Reports]
+      summary: List saved token reports
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Paginated list
+
+  /api/v1/block/reports:
+    post:
+      tags: [Saved Reports]
+      summary: Save a block analysis (MEV) report
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [blockNumber, network, reportData]
+              properties:
+                blockNumber: { type: integer }
+                network: { type: string }
+                reportData: { type: object }
+      responses:
+        '201':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+    get:
+      tags: [Saved Reports]
+      summary: List saved block reports
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Paginated list
+
+  /api/v1/multichain/reports:
+    post:
+      tags: [Saved Reports]
+      summary: Save a multi-chain wallet report
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, reportData]
+              properties:
+                address: { type: string }
+                reportData: { type: object }
+      responses:
+        '201':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+    get:
+      tags: [Saved Reports]
+      summary: List saved multi-chain reports
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Paginated list
+
+  # ── MEV ───────────────────────────────────────────────
+  /api/v1/mev/bots:
+    get:
+      tags: [MEV]
+      summary: List known MEV bots and their recent stats
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: network
+          in: query
+          schema: { type: string, default: eth }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+      responses:
+        '200':
+          description: MEV bot list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    address: { type: string }
+                    network: { type: string }
+                    label: { type: [string, 'null'] }
+                    sandwiches_7d: { type: integer }
+                    profit_usd_7d: { type: number }
+
+  /api/v1/mev/stats:
+    get:
+      tags: [MEV]
+      summary: Aggregate MEV statistics
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: network
+          in: query
+          schema: { type: string }
+        - name: period
+          in: query
+          schema: { type: string, enum: [24h, 7d, 30d], default: 7d }
+      responses:
+        '200':
+          description: Aggregate stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  network: { type: string }
+                  period: { type: string }
+                  totalSandwiches: { type: integer }
+                  totalArbitrage: { type: integer }
+                  totalFlashLoans: { type: integer }
+                  extractedUsd: { type: number }
+
+  /api/v1/mev/scan/trigger:
+    post:
+      tags: [MEV]
+      summary: Trigger manual MEV scan for a network
+      description: Kicks off the MEV aggregation cron job on demand. Rate-limited.
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [network]
+              properties:
+                network: { type: string }
+      responses:
+        '202':
+          description: Scan queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId: { type: string }
+                  status: { type: string, enum: [queued] }
+        '429': { description: Rate-limited }
+
+  # ── AI Investigation (extra) ──────────────────────────
+  /api/investigations/{id}:
+    get:
+      tags: [AI Investigation]
+      summary: Get investigation detail
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Full investigation with messages and tool calls
+        '404': { description: Not found }
+
+  /api/investigations/{id}/archive:
+    post:
+      tags: [AI Investigation]
+      summary: Archive investigation
+      description: Soft-delete. Hides from default list but preserves data.
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Archived }
+        '404': { description: Not found }
+
+  # ── Support ───────────────────────────────────────────
+  /api/support/tickets:
+    post:
+      tags: [Support]
+      summary: Open a support ticket
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject, description, category]
+              properties:
+                subject: { type: string, maxLength: 200 }
+                description: { type: string, maxLength: 10000 }
+                category: { type: string, enum: [billing, bug, feature, general, security] }
+      responses:
+        '201':
+          description: Ticket created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+                  status: { type: string, enum: [open, pending, resolved, closed] }
+    get:
+      tags: [Support]
+      summary: List user's tickets
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [open, pending, resolved, closed] }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Paginated tickets
+
+components:
+  securitySchemes:
+    apiKeyAuth:
+      type: http
+      scheme: bearer
+      description: API key (create at https://onchainrisk.io/dashboard/api-keys)
+
+  responses:
+    ValidationFailed:
+      description: |
+        Address failed validation before any scan was performed. HTTP status
+        is **422** with envelope `{ success: false, error: ErrorResponse }`.
+        `error.details.errorCode` carries the granular reason.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              error: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            address-network-mismatch:
+              summary: Tron address submitted with network=eth
+              value:
+                success: false
+                error:
+                  message: "Validation failed"
+                  code: "VALIDATION_ERROR"
+                  details:
+                    address: "Address format does not match selected network. The address looks like a tron address, but network was set to eth."
+                    errorCode: "ADDRESS_NETWORK_MISMATCH"
+                    detectedFamily: "tron"
+                    requestedNetwork: "eth"
+            invalid-address:
+              summary: Whitespace-only address
+              value:
+                success: false
+                error:
+                  message: "Validation failed"
+                  code: "VALIDATION_ERROR"
+                  details:
+                    address: "Address is required."
+                    errorCode: "INVALID_ADDRESS"
+            unsupported-network:
+              summary: network=Ethereum (not in whitelist)
+              value:
+                success: false
+                error:
+                  message: "Validation failed"
+                  code: "VALIDATION_ERROR"
+                  details:
+                    address: "Unsupported network 'ethereum'. Supported: arbitrum, avalanche, base, bsc, btc, cardano, celo, cosmos, cronos, eth, fantom, linea, ltc, moonbeam, optimism, polygon, polygon_zkevm, scroll, sol, ton, tron, xrp, zksync."
+                    errorCode: "UNSUPPORTED_NETWORK"
+                    requestedNetwork: "ethereum"
+            could-not-detect-network:
+              summary: Unrecognisable address, no network hint
+              value:
+                success: false
+                error:
+                  message: "Validation failed"
+                  code: "VALIDATION_ERROR"
+                  details:
+                    address: "Could not detect network from address format. Please specify the network parameter."
+                    errorCode: "COULD_NOT_DETECT_NETWORK"
+            invalid-address-checksum:
+              summary: Tron-shaped string with bad Base58Check
+              value:
+                success: false
+                error:
+                  message: "Validation failed"
+                  code: "VALIDATION_ERROR"
+                  details:
+                    address: "Address failed tron checksum validation."
+                    errorCode: "INVALID_ADDRESS_CHECKSUM"
+                    detectedFamily: "tron"
+                    requestedNetwork: "tron"
+
+  schemas:
+    ErrorResponse:
+      type: object
+      description: |
+        Stable error envelope for validation and business-rule failures.
+        The shape mirrors the live Worker response:
+
+        ```json
+        { "success": false, "error": ErrorResponse }
+        ```
+
+        Required fields (`code` + `message`) are always populated; `details`
+        carries structured diagnostic context and is present on validation
+        failures. Clients should treat unknown fields as additive
+        (no `additionalProperties: false`).
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Outer envelope code. Always `VALIDATION_ERROR` for the validation family.
+          enum:
+            - VALIDATION_ERROR
+        message:
+          type: string
+          description: Short, stable human-readable summary.
+        details:
+          type: object
+          description: |
+            Granular context. For validation failures the shape below is stable;
+            for other error classes the Worker may return different keys.
+          properties:
+            address:
+              type: string
+              description: Human-readable reason specific to the failing address.
+            errorCode:
+              type: string
+              description: |
+                Granular validation reason. Stable machine-readable code.
+
+                  - `INVALID_ADDRESS` — empty, wrong format, whitespace-only.
+                  - `UNSUPPORTED_NETWORK` — `network` not in the supported list.
+                  - `COULD_NOT_DETECT_NETWORK` — address format unrecognised and `network` omitted.
+                  - `INVALID_ADDRESS_CHECKSUM` — decode succeeded, family checksum failed (Tron / BTC-legacy / LTC-legacy). Solana decode failures surface as `INVALID_ADDRESS` because Solana is not checksum-based.
+                  - `ADDRESS_NETWORK_MISMATCH` — detected family inconsistent with requested `network`.
+              enum:
+                - INVALID_ADDRESS
+                - UNSUPPORTED_NETWORK
+                - COULD_NOT_DETECT_NETWORK
+                - INVALID_ADDRESS_CHECKSUM
+                - ADDRESS_NETWORK_MISMATCH
+            detectedFamily:
+              type: [string, 'null']
+              description: |
+                Address family detected from the input. Null when the format
+                was unrecognisable. ENS names are resolved through a legacy
+                path and are intentionally not part of the strict family
+                contract documented here.
+            requestedNetwork:
+              type: [string, 'null']
+              description: Normalized network string from the request, if any.
+
+    AnalysisResult:
+      type: object
+      properties:
+        address: { type: string }
+        network: { type: string }
+        riskScore: { type: integer, minimum: 0, maximum: 100 }
+        riskLevel: { type: string, enum: [critical, high, medium, low] }
+        reportId: { type: string }
+        addressInfo:
+          type: object
+          properties:
+            type: { type: string, enum: [eoa, contract, unknown] }
+            balance: { type: string, example: "1.5 ETH" }
+            balanceUsd: { type: number, nullable: true, example: 3045.50 }
+            nativePriceUsd: { type: number, nullable: true, example: 2030.33 }
+            txCount: { type: integer }
+            firstSeen: { type: string, nullable: true }
+            lastSeen: { type: string, nullable: true }
+        patternFlags: { type: array, items: { type: string }, example: ["TRANSIT_WALLET", "KNOWN_MIXER"] }
+        topCounterparties:
+          type: array
+          items:
+            type: object
+            properties:
+              address: { type: string }
+              label: { type: string, nullable: true }
+              category: { $ref: '#/components/schemas/CategoryEnum' }
+              txCount: { type: integer }
+              totalValue: { type: string }
+              inbound: { type: boolean }
+        addressConnections:
+          type: array
+          description: |
+            Aggregated counterparty category breakdown by total interaction volume (inbound + outbound)
+            across up to 30 counterparties returned by the analyzer. Percentages rounded to 1 decimal,
+            sum may be 99.0–101.0 due to rounding.
+          items:
+            $ref: '#/components/schemas/AddressConnection'
+          example:
+            - category: exchange
+              percentage: 64.0
+              valueFormatted: "15,000 TRX"
+              valueRaw: "15000000000"
+              unit: sun
+            - category: sanctioned
+              percentage: 23.9
+              valueFormatted: "5,600 TRX"
+              valueRaw: "5600000000"
+              unit: sun
+            - category: unknown
+              percentage: 12.1
+              valueFormatted: "2,835 TRX"
+              valueRaw: "2835000000"
+              unit: sun
+        fundedBy:
+          type: object
+          nullable: true
+          properties:
+            address: { type: string }
+            label: { type: string, nullable: true }
+            txHash: { type: string }
+            timestamp: { type: integer }
+            value: { type: string }
+        timing: { type: object, nullable: true }
+        crossChain: { type: object, nullable: true }
+        exchangeDeposits: { type: object, nullable: true }
+        defiSwaps: { type: object, nullable: true }
+        nftWashTrading: { type: object, nullable: true }
+        osintIntelligence: { type: object, nullable: true }
+        tokenFlow: { type: object, nullable: true }
+        contractAnalysis: { type: object, nullable: true }
+        honeypot: { type: object, nullable: true }
+        railgun: { type: object, nullable: true }
+        clusters: { type: object, nullable: true }
+        usdPrices: { type: object, nullable: true }
+        tokenTransferSupported: { type: boolean, nullable: true, description: "Whether token transfer data is available for this network" }
+        tokenFlowIncomplete: { type: boolean, nullable: true, description: "True if token flow data is partial due to API failures" }
+        walletArchetype: { type: string, nullable: true, enum: [automated, distribution, exchange_like, mev_like, unclassified], description: "SOL wallet behavior classification" }
+        partialReason: { type: string, nullable: true, enum: [timeout, limit_cap, limit_cap_assumed, api_error], description: "Reason for partial transaction data" }
+        analysisTime: { type: integer, description: "Milliseconds" }
+        timestamp: { type: string, format: date-time }
+
+    CategoryEnum:
+      type: string
+      description: Counterparty category from label database
+      enum:
+        - exchange
+        - dex
+        - defi
+        - bridge
+        - otc
+        - mev_bot
+        - instant_exchange
+        - phishing
+        - mixer
+        - scam
+        - exploit
+        - sanctioned
+        - frozen
+        - custodian
+        - fiat_ramp
+        - payment_processor
+        - unknown
+
+    AddressConnection:
+      type: object
+      description: Aggregated interaction volume for a single counterparty category
+      required: [category, percentage, valueFormatted, valueRaw, unit]
+      properties:
+        category:
+          $ref: '#/components/schemas/CategoryEnum'
+        percentage:
+          type: number
+          description: "Percentage of total interaction volume (0.0–100.0)"
+          example: 64.0
+        valueFormatted:
+          type: string
+          description: "Human-readable value with network unit (display-only)"
+          example: "15,000 TRX"
+        valueRaw:
+          type: string
+          description: "Raw value in network base units (wei, sun, satoshi, etc.) for programmatic use"
+          example: "15000000000"
+        unit:
+          type: string
+          description: "Base unit name for the network (wei, sun, satoshi, lovelace, etc.)"
+          example: "sun"
+
+    GraphSnapshot:
+      type: object
+      description: Graph snapshot metadata (no graphData payload)
+      required: [id, reportId, name, nodeCount, edgeCount, createdAt, updatedAt]
+      properties:
+        id: { type: integer, example: 42 }
+        reportId: { type: string, description: "Report public_id" }
+        name: { type: string, maxLength: 100, example: "After expanding counterparties" }
+        description: { type: string, nullable: true, maxLength: 500 }
+        nodeCount: { type: integer, description: "Computed server-side from graphData.nodes" }
+        edgeCount: { type: integer, description: "Computed server-side from graphData.edges" }
+        createdAt: { type: integer, description: "Unix timestamp (seconds)" }
+        updatedAt: { type: integer, description: "Unix timestamp (seconds)" }
+
+    GraphSnapshotFull:
+      allOf:
+        - $ref: '#/components/schemas/GraphSnapshot'
+        - type: object
+          required: [graphData]
+          properties:
+            graphData:
+              type: object
+              required: [nodes, edges]
+              properties:
+                nodes: { type: array, items: { type: object } }
+                edges: { type: array, items: { type: object } }
