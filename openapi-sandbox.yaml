@@ -1,0 +1,660 @@
+openapi: 3.1.0
+info:
+  title: OnChainRisk Sandbox API
+  version: 1.0.0
+  license:
+    name: Proprietary
+    url: https://onchainrisk.io/terms
+  description: |
+    **[⬇ Download OpenAPI spec (YAML)](/openapi-sandbox.yaml)** — for codegen tools (openapi-generator, orval, etc.)
+
+    ---
+
+    Sandbox tier for developers to evaluate OnChainRisk integration with real
+    addresses and real responses, without the compute cost of a full paid
+    analysis.
+
+    ## What Sandbox is for
+
+    - Auth testing - confirm your API key works
+    - Response envelope validation - see actual field types and shapes
+    - Integration testing - wire your client against a real endpoint
+    - Basic UI prototyping
+
+    ## What Sandbox is NOT for
+
+    - Production monitoring or alerting bots
+    - Large-scale tracing or attribution
+    - Any workflow that depends on historical data beyond 7 days
+    - Graph expansion, cluster analysis, cross-chain tracing
+
+    ## Authentication
+
+    Create a sandbox API key in the dashboard at
+    https://onchainrisk.io/dashboard/api-keys. Free-tier accounts can create
+    a sandbox key. Key management (create, list, revoke) is dashboard-only
+    and intentionally not exposed here.
+
+    Send your key in the `Authorization` header:
+
+        Authorization: Bearer ocr_live_...
+
+    ## Rate Limits
+
+    Token bucket algorithm.
+
+    | Scope   | Capacity | Refill       |
+    |---------|----------|--------------|
+    | Per key | 20       | 10 per min   |
+    | Per IP  | 30       | 30 per min   |
+
+    429 responses include a `Retry-After` header and a body with `bucket`
+    and `retry_after_seconds`.
+
+    ## Response Policy
+
+    Sandbox responses keep the same core envelope as paid (`address`,
+    `network`, `riskScore`, `riskLevel`, `addressInfo`, `_sandbox`, etc.),
+    but many expensive fields are gated:
+
+    - gated objects are returned as `null` (e.g. `tokenFlow`, `clusters`, `honeypot`)
+    - gated arrays are returned as `[]` (e.g. `topCounterparties`, `addressConnections`)
+    - gated scalars are omitted entirely (e.g. `analysisMode`, `fullAnalysisAvailable`)
+    - truncated arrays keep only recent items (e.g. `transactionHistory` = last 7 days)
+
+    The authoritative list for a given response lives in `_sandbox.gated_fields[]`
+    and `_sandbox.truncated_fields{}`. Clients should treat these as source of
+    truth and NOT assume every paid field will be present.
+
+    ## Sandbox signal (canonical)
+
+    A client can detect sandbox mode two ways:
+
+    1. Response contains a `_sandbox` root object with `profile: "sandbox"`
+    2. `GET /api/user/me` returns `key_type: "sandbox"` and `api_mode: "sandbox"`
+
+    No other fields are overloaded with sandbox semantics - `plan`, `riskLevel`,
+    `riskConfidence`, `dataQuality` and other enums keep their existing paid
+    value vocabularies.
+
+    ## Validation errors
+
+    Address validation runs before any blockchain scan. On failure the Worker
+    returns **HTTP 422** with this envelope:
+
+    ```json
+    {
+      "success": false,
+      "error": {
+        "message": "Validation failed",
+        "code": "VALIDATION_ERROR",
+        "details": {
+          "address": "Address format does not match selected network. The address looks like a tron address, but network was set to eth.",
+          "errorCode": "ADDRESS_NETWORK_MISMATCH",
+          "detectedFamily": "tron",
+          "requestedNetwork": "eth"
+        }
+      }
+    }
+    ```
+
+    `error.code` is always `VALIDATION_ERROR` for this class. The granular
+    reason lives in `error.details.errorCode`:
+
+    | `errorCode`                   | When                                                                             |
+    |-------------------------------|----------------------------------------------------------------------------------|
+    | `INVALID_ADDRESS`             | empty, wrong format, whitespace-only                                             |
+    | `UNSUPPORTED_NETWORK`         | `network` not in the supported list                                              |
+    | `COULD_NOT_DETECT_NETWORK`    | address format unrecognised AND `network` omitted                                |
+    | `INVALID_ADDRESS_CHECKSUM`    | decode succeeded, family checksum failed (Tron / BTC-legacy / LTC-legacy). Solana decode failures surface as `INVALID_ADDRESS` because Solana is not checksum-based. |
+    | `ADDRESS_NETWORK_MISMATCH`    | detected address family inconsistent with requested `network`                    |
+
+    `detectedFamily` and `requestedNetwork` are present only when they add
+    useful diagnostic context; both may be `null` or absent.
+  contact:
+    name: OnChainRisk Support
+    url: https://onchainrisk.io/dashboard/support
+    email: admin@onchainrisk.io
+
+servers:
+  - url: https://api.onchainrisk.io
+    description: Production (sandbox requests use the same host)
+
+tags:
+  - name: Analysis
+    description: Address risk analysis (sandbox profile)
+  - name: Account
+    description: Current user profile and usage
+
+security:
+  - ApiKeyAuth: []
+
+paths:
+  /api/v1/check:
+    post:
+      operationId: sandboxCheckAddress
+      tags: [Analysis]
+      summary: Analyze a wallet address (sandbox profile)
+      description: |
+        Returns a risk summary for the given address. Sandbox profile runs
+        only cheap modules on the backend: label lookup, balance + tx count,
+        contract bytecode check, and recent activity in a 7-day window.
+        Expensive modules (token flow, cross-chain, clustering, graph) are
+        skipped at compute time and the corresponding response fields are
+        gated per the policy in the top-level description.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, network]
+              properties:
+                address:
+                  type: string
+                  example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+                network:
+                  type: string
+                  example: "eth"
+      responses:
+        '200':
+          description: Sandbox analysis response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxCheckResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/SandboxNotSupported'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  # Note: /api/analyze/estimate is NOT exposed on api.onchainrisk.io. It is an
+  # internal Modal preflight called by the Worker handler; direct external
+  # calls would 404. Intentionally omitted from this spec.
+
+  /api/user/me:
+    get:
+      operationId: sandboxGetMe
+      tags: [Account]
+      summary: Current user profile (with sandbox markers)
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserMeSandbox'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/user/usage:
+    get:
+      operationId: sandboxGetUsage
+      tags: [Account]
+      summary: Current usage and limit status
+      description: |
+        Returns current period usage against plan limit plus available credits.
+        Free tier returns rolling-daily window; paid tiers return monthly.
+      responses:
+        '200':
+          description: Usage info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: ocr_live_*
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              error: { type: string, example: "unauthorized" }
+
+    BadRequest:
+      description: Invalid request (e.g. address too large for sandbox)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              error: { type: string, example: "address_too_large_for_sandbox" }
+              estimated_tx: { type: integer }
+              upgrade_url: { type: string }
+
+    SandboxNotSupported:
+      description: Endpoint not available for sandbox keys
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              error: { type: string, example: "sandbox_not_supported" }
+              message: { type: string }
+              endpoint: { type: string }
+              upgrade_url: { type: string }
+              docs_url: { type: string }
+
+    ValidationFailed:
+      description: |
+        Address failed validation before any scan was performed. HTTP status
+        is **422** with envelope `{ success: false, error: ErrorResponse }`.
+        `error.details.errorCode` carries the granular reason.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              error: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            address-network-mismatch:
+              summary: Tron address submitted with network=eth
+              value:
+                success: false
+                error:
+                  message: "Validation failed"
+                  code: "VALIDATION_ERROR"
+                  details:
+                    address: "Address format does not match selected network. The address looks like a tron address, but network was set to eth."
+                    errorCode: "ADDRESS_NETWORK_MISMATCH"
+                    detectedFamily: "tron"
+                    requestedNetwork: "eth"
+            invalid-address:
+              summary: Whitespace-only address
+              value:
+                success: false
+                error:
+                  message: "Validation failed"
+                  code: "VALIDATION_ERROR"
+                  details:
+                    address: "Address is required."
+                    errorCode: "INVALID_ADDRESS"
+
+    RateLimited:
+      description: Rate limit exceeded (token bucket)
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds until at least 1 token refills
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              error: { type: string, example: "rate_limit_exceeded" }
+              bucket:
+                type: string
+                enum: [per_key, per_ip]
+              retry_after_seconds: { type: integer }
+              upgrade_url: { type: string }
+
+  schemas:
+    ErrorResponse:
+      type: object
+      description: |
+        Stable error envelope for validation and business-rule failures.
+        The shape mirrors the live Worker response:
+
+        ```json
+        { "success": false, "error": ErrorResponse }
+        ```
+
+        Required fields (`code` + `message`) are always populated; `details`
+        carries structured diagnostic context and is present on validation
+        failures. Clients should treat unknown fields as additive
+        (no `additionalProperties: false`).
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Outer envelope code. Always `VALIDATION_ERROR` for the validation family.
+          enum:
+            - VALIDATION_ERROR
+        message:
+          type: string
+          description: Short, stable human-readable summary.
+        details:
+          type: object
+          description: |
+            Granular context. For validation failures the shape below is stable;
+            for other error classes the Worker may return different keys.
+          properties:
+            address:
+              type: string
+              description: Human-readable reason specific to the failing address.
+            errorCode:
+              type: string
+              description: |
+                Granular validation reason. Stable machine-readable code.
+
+                  - `INVALID_ADDRESS` — empty, wrong format, whitespace-only.
+                  - `UNSUPPORTED_NETWORK` — `network` not in the supported list.
+                  - `COULD_NOT_DETECT_NETWORK` — address format unrecognised and `network` omitted.
+                  - `INVALID_ADDRESS_CHECKSUM` — decode succeeded, family checksum failed (Tron / BTC-legacy / LTC-legacy). Solana decode failures surface as `INVALID_ADDRESS` because Solana is not checksum-based.
+                  - `ADDRESS_NETWORK_MISMATCH` — detected family inconsistent with requested `network`.
+              enum:
+                - INVALID_ADDRESS
+                - UNSUPPORTED_NETWORK
+                - COULD_NOT_DETECT_NETWORK
+                - INVALID_ADDRESS_CHECKSUM
+                - ADDRESS_NETWORK_MISMATCH
+            detectedFamily:
+              type: [string, 'null']
+              description: |
+                Address family detected from the input. Null when the format
+                was unrecognisable. ENS names are resolved through a legacy
+                path and are intentionally not part of the strict family
+                contract documented here.
+            requestedNetwork:
+              type: [string, 'null']
+              description: Normalized network string from the request, if any.
+
+    Counterparty:
+      type: object
+      description: |
+        Wallet counterparty entry (inbound or outbound). In sandbox responses
+        the containing array is always empty; this schema documents the
+        shape clients can rely on when upgrading to paid.
+      properties:
+        address: { type: string }
+        label: { type: [string, 'null'] }
+        value: { type: string, description: "Native-unit value transferred" }
+        valueUsd: { type: [number, 'null'] }
+        txCount: { type: integer }
+        inbound: { type: boolean }
+
+    Connection:
+      type: object
+      description: Directed value edge used by graph views. Empty in sandbox.
+      properties:
+        address: { type: string }
+        value: { type: string }
+        direction:
+          type: string
+          enum: [in, out]
+
+    ContractDeployment:
+      type: object
+      description: Contract deployed by the address. Empty in sandbox.
+      properties:
+        contractAddress: { type: string }
+        txHash: { type: string }
+        blockNumber: { type: integer }
+
+    TokenTransfer:
+      type: object
+      description: |
+        ERC20 / SPL / etc. token transfer. Empty in sandbox responses.
+      properties:
+        txHash: { type: string }
+        from: { type: string }
+        to: { type: string }
+        tokenAddress: { type: string }
+        tokenSymbol: { type: [string, 'null'] }
+        amount: { type: string }
+        timestamp: { type: integer }
+
+    Transaction:
+      type: object
+      description: |
+        Native transaction entry. In sandbox, only the last 7 days are included.
+      properties:
+        txHash: { type: string }
+        from: { type: string }
+        to: { type: [string, 'null'] }
+        value: { type: string }
+        timestamp: { type: integer }
+        direction:
+          type: string
+          enum: [in, out, self]
+
+    SandboxCheckResponse:
+      type: object
+      description: |
+        Same core envelope as the paid `/api/v1/check` response, with many
+        expensive fields returned as `null` or `[]`. The `_sandbox` root block
+        lists which fields are gated for this response. See the top-level
+        description "Response Policy" section for details.
+      properties:
+        address: { type: string }
+        network: { type: string }
+        riskScore: { type: integer, minimum: 0, maximum: 100 }
+        riskLevel:
+          type: string
+          enum: [low, medium, high, unknown]
+        riskConfidence:
+          type: string
+          enum: [high, medium, low]
+          description: |
+            Always `"low"` in sandbox - reusing the existing paid enum value
+            to signal partial-data analysis without adding a new enum value.
+        dataQuality:
+          type: string
+          enum: [full, partial, degraded]
+          description: Always `"partial"` in sandbox.
+        riskNote:
+          type: [string, 'null']
+        addressInfo:
+          type: object
+          properties:
+            type: { type: string, enum: [eoa, contract, unknown] }
+            balance: { type: string }
+            balanceUsd: { type: [number, 'null'] }
+            nativePriceUsd: { type: [number, 'null'] }
+            txCount: { type: integer }
+            firstSeen: { type: [string, 'null'] }
+            lastSeen: { type: [string, 'null'] }
+        labels:
+          type: array
+          items: { type: string }
+        usdPrices:
+          type: [object, 'null']
+        analysisTime: { type: integer, description: "Milliseconds" }
+        timestamp: { type: string, format: date-time }
+
+        # Truncated arrays - real items, bounded
+        patternFlags:
+          type: array
+          items: { type: string }
+          maxItems: 5
+          description: Capped at the top 5 flags in sandbox.
+        transactionHistory:
+          type: array
+          description: In sandbox, only transactions from the last 7 days.
+          items: { $ref: '#/components/schemas/Transaction' }
+
+        # Gated arrays - always [] in sandbox, but item schema preserved for codegen / typing
+        topCounterparties:
+          type: array
+          items: { $ref: '#/components/schemas/Counterparty' }
+          description: |
+            Always `[]` in sandbox responses. Schema preserved so TypeScript /
+            other generated types remain meaningful when you upgrade to paid.
+          x-ocr-sandbox-always-empty: true
+        addressConnections:
+          type: array
+          items: { $ref: '#/components/schemas/Connection' }
+          description: Always `[]` in sandbox responses.
+          x-ocr-sandbox-always-empty: true
+        contractDeployments:
+          type: array
+          items: { $ref: '#/components/schemas/ContractDeployment' }
+          description: Always `[]` in sandbox responses.
+          x-ocr-sandbox-always-empty: true
+        tokenTransferHistory:
+          type: array
+          items: { $ref: '#/components/schemas/TokenTransfer' }
+          description: Always `[]` in sandbox responses.
+          x-ocr-sandbox-always-empty: true
+
+        # Gated objects - always null in sandbox
+        crossChain:
+          type: [object, 'null']
+          description: Always `null` in sandbox. Populated on paid plans.
+          x-ocr-sandbox-always-null: true
+        tokenFlow:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        clusters:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        temporalClusters:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        nftWashTrading:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        exchangeDeposits:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        osintIntelligence:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        railgun:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        defiSwaps:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        contractAnalysis:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        honeypot:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        tokenScore:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        timing:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        fundedBy:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        contractInfo:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        dataCompleteness:
+          type: [object, 'null']
+          description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+
+        # Sandbox marker block
+        _sandbox:
+          $ref: '#/components/schemas/SandboxMarker'
+
+    SandboxMarker:
+      type: object
+      description: |
+        Present only in responses returned to sandbox API keys. Paid responses
+        never include this field.
+      required: [profile, coverage_days, reports_saved, gated_fields, truncated_fields, upgrade_url, docs_url]
+      properties:
+        profile:
+          type: string
+          enum: [sandbox]
+        coverage_days:
+          type: integer
+          enum: [7]
+        reports_saved:
+          type: boolean
+          enum: [false]
+          description: Sandbox responses are never persisted as reports.
+        gated_fields:
+          type: array
+          items: { type: string }
+          description: |
+            Field names that are gated in this response (null or [] or
+            omitted). Use this as source of truth, not a hardcoded list.
+        truncated_fields:
+          type: object
+          additionalProperties: { type: string }
+          description: Map of field name to truncation reason.
+        upgrade_url: { type: string, format: uri }
+        docs_url: { type: string, format: uri }
+
+    UserMeSandbox:
+      type: object
+      description: |
+        User profile returned when the request used a sandbox API key. The
+        `plan` field stays as the real subscription tier (billing truth);
+        `key_type` and `api_mode` are the sandbox signal.
+      properties:
+        id: { type: integer }
+        email: { type: string, format: email }
+        plan:
+          type: string
+          enum: [free, pro, business, enterprise]
+          description: Real subscription plan. Never overridden to "sandbox".
+        key_type:
+          type: string
+          enum: [sandbox]
+          description: Present only when request used a sandbox API key.
+        api_mode:
+          type: string
+          enum: [sandbox]
+          description: Effective access mode for this request.
+
+    UsageInfo:
+      type: object
+      description: |
+        Usage counters for the authenticated user. Free tier returns a rolling
+        24-hour window; paid tiers return a monthly window. Reset fields are
+        omitted for free tier because a rolling window has no fixed reset.
+      properties:
+        plan:
+          type: string
+          enum: [free, pro, business, enterprise]
+        period:
+          type: string
+          enum: [daily, monthly]
+        queriesUsed: { type: integer }
+        queriesLimit: { type: integer }
+        queriesRemaining: { type: integer }
+        credits:
+          type: integer
+          description: Purchased overflow credits available.
+        periodStart:
+          type: [string, 'null']
+          format: date-time
+          description: Not returned for free tier (rolling window).
+        periodEnd:
+          type: [string, 'null']
+          format: date-time
+        resetsAt:
+          type: [string, 'null']
+          format: date-time
