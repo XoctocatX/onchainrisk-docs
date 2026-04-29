@@ -62,18 +62,6 @@
       "description": "Auto-populated when POST /api/v1/check returns 202 (heavy address routed to async queue). Source: response.data.reportId in the 202 payload."
     },
     {
-      "key": "sample_share_token",
-      "value": "REPLACE_AFTER_SHARE_CREATE",
-      "type": "string",
-      "description": "Auto-populated when you run POST /api/reports/{id}/share. Source: response.data.token."
-    },
-    {
-      "key": "sample_snapshot_id",
-      "value": "REPLACE_AFTER_SNAPSHOT_CREATE",
-      "type": "string",
-      "description": "Auto-populated when you run POST /api/reports/{id}/snapshots. Source: response.data.id."
-    },
-    {
       "key": "sample_watchlist_id",
       "value": "REPLACE_AFTER_WATCHLIST_ADD",
       "type": "string",
@@ -111,236 +99,6 @@
     }
   ],
   "item": [
-    {
-      "name": "Account",
-      "item": [
-        {
-          "name": "GET /api/user/me — profile",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/user/me",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "user",
-                "me"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "const d = pm.response.json().data;",
-                  "pm.test('plan is paid tier', () => pm.expect(['pro','business','enterprise']).to.include(d.plan));",
-                  "pm.test('NO sandbox markers', () => {",
-                  "  pm.expect(d).to.not.have.property('key_type');",
-                  "  pm.expect(d).to.not.have.property('api_mode');",
-                  "});"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "GET /api/user/usage — quota status",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/user/usage",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "user",
-                "usage"
-              ]
-            }
-          }
-        },
-        {
-          "name": "GET /api/user/risk-settings",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/user/risk-settings",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "user",
-                "risk-settings"
-              ]
-            }
-          }
-        },
-        {
-          "name": "PATCH /api/user/risk-settings",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"weights\": { \"mixer\": 40, \"sanction\": 100 },\n  \"overrides\": {}\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/user/risk-settings",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "user",
-                "risk-settings"
-              ]
-            }
-          }
-        },
-        {
-          "name": "GET /api/user/branding",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/user/branding",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "user",
-                "branding"
-              ]
-            }
-          }
-        },
-        {
-          "name": "PATCH /api/user/branding",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"logoUrl\": \"https://example.com/logo.png\",\n  \"primaryColor\": \"#00d4aa\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/user/branding",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "user",
-                "branding"
-              ]
-            }
-          }
-        },
-        {
-          "name": "GET /api/user/report-layout",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/user/report-layout",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "user",
-                "report-layout"
-              ]
-            }
-          }
-        },
-        {
-          "name": "PATCH /api/user/report-layout",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"sectionOrder\": [\"summary\", \"counterparties\", \"tokenFlow\"]\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/user/report-layout",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "user",
-                "report-layout"
-              ]
-            }
-          }
-        }
-      ]
-    },
     {
       "name": "Analysis",
       "item": [
@@ -698,6 +456,194 @@
               ],
               "cookie": [],
               "body": "{\n  \"success\": true,\n  \"data\": {\n    \"address\": \"bc1qq2mvrp4g3ugd424dw4xv53rgsf8szkrv853jrc\",\n    \"network\": \"btc\",\n    \"riskScore\": null,\n    \"riskLevel\": \"unknown\",\n    \"addressInfo\": {\n      \"type\": \"eoa\",\n      \"balance\": \"0.59374798 BTC\",\n      \"txCount\": 243064,\n      \"firstSeen\": null,\n      \"lastSeen\": null\n    },\n    \"patternFlags\": [],\n    \"transactionHistory\": [],\n    \"tokenTransferHistory\": [],\n    \"topCounterparties\": [],\n    \"addressConnections\": [],\n    \"txFetchIncomplete\": true,\n    \"dataQuality\": \"partial\",\n    \"riskConfidence\": \"low\",\n    \"dataCompleteness\": {\n      \"reportedTxCount\": 243064,\n      \"fetchedTxCount\": 0,\n      \"completenessPct\": 0.0,\n      \"reportedCountSource\": \"mempool_chain_stats\",\n      \"partialReason\": \"btc_tx_count_exceeds_full_fetch_limit\"\n    }\n  }\n}"
+            },
+            {
+              "name": "202 Async queued (heavy address)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{paid_api_key}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/check",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "check"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"address\": \"0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D\",\n  \"network\": \"eth\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Accepted",
+              "code": 202,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"reportId\": \"98958045-d736-4bc4-90ed-a717a9258738\",\n    \"status\": \"queued\",\n    \"async\": true\n  }\n}"
+            },
+            {
+              "name": "202 Deduplicated (idempotent retry within 30 min)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{paid_api_key}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/check",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "check"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"address\": \"0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D\",\n  \"network\": \"eth\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Accepted",
+              "code": 202,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"reportId\": \"98958045-d736-4bc4-90ed-a717a9258738\",\n    \"status\": \"queued\",\n    \"async\": true,\n    \"deduplicated\": true\n  }\n}"
+            },
+            {
+              "name": "200 Verified smart contract (USDC, complete)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{paid_api_key}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/check",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "check"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"address\": \"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\n  \"network\": \"eth\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"reportId\": \"6c4f29d4-2b1e-4d2c-8b77-c8e1b9a40124\",\n    \"status\": \"complete\",\n    \"address\": \"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\n    \"network\": \"eth\",\n    \"riskScore\": 5,\n    \"riskLevel\": \"low\",\n    \"createdAt\": \"2026-04-25T10:15:00Z\",\n    \"addressInfo\": {\n      \"type\": \"smart_contract\",\n      \"balance\": \"0 ETH\",\n      \"txCount\": 412,\n      \"firstSeen\": \"2020-06-09T18:43:35Z\",\n      \"lastSeen\": \"2026-04-25T10:11:02Z\"\n    },\n    \"patternFlags\": [],\n    \"contractAnalysis\": {\n      \"contractName\": \"FiatTokenV2_2\",\n      \"bytecodeSize\": 24576,\n      \"compilerVersion\": \"v0.6.12+commit.27d51765\",\n      \"deployer\": \"0x95Ba4cF87D6723ad9C0Db21737D862bE80e93911\",\n      \"isVerified\": true,\n      \"hasSelfdestruct\": false,\n      \"hasDelegatecall\": true,\n      \"hasCreate2\": false,\n      \"similarityFlags\": [\"ERC20\", \"Upgradeable\"],\n      \"knownSignatures\": [\"transfer(address,uint256)\", \"approve(address,uint256)\", \"balanceOf(address)\"]\n    },\n    \"contractInfo\": {\n      \"deployer\": \"0x95Ba4cF87D6723ad9C0Db21737D862bE80e93911\",\n      \"creationTx\": \"0xe7e0fe390354509cd08c9a0168536938600ddc552b3f7cb96030ebef62e75895\",\n      \"creationBlock\": 6082465,\n      \"isProxy\": true,\n      \"implementationAddress\": \"0xa2327a938Febf5FEC13baCFb16Ae10EcBc4cbDCF\",\n      \"contractName\": \"FiatTokenV2_2\"\n    },\n    \"dataCompleteness\": {\n      \"reportedTxCount\": 412,\n      \"fetchedTxCount\": 412,\n      \"completenessPct\": 100,\n      \"partialReason\": null\n    }\n  }\n}"
+            },
+            {
+              "name": "200 Heavy contract — overview only (heavy_contract_overview)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{paid_api_key}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/check",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "check"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"address\": \"0x1F98431c8aD98523631AE4a59f267346ea31F984\",\n  \"network\": \"eth\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"reportId\": \"d2b1e7f1-9c3a-4f88-9e02-66ad12fa01a3\",\n    \"status\": \"complete\",\n    \"address\": \"0x1F98431c8aD98523631AE4a59f267346ea31F984\",\n    \"network\": \"eth\",\n    \"riskScore\": null,\n    \"riskLevel\": \"low\",\n    \"createdAt\": \"2026-04-25T10:00:00Z\",\n    \"addressInfo\": {\n      \"type\": \"contract\",\n      \"balance\": \"0 ETH\",\n      \"txCount\": 267575,\n      \"firstSeen\": \"2021-05-04T23:10:00Z\",\n      \"lastSeen\": \"2026-04-25T09:55:21Z\"\n    },\n    \"patternFlags\": [],\n    \"contractAnalysis\": {\n      \"contractName\": null,\n      \"bytecodeSize\": 6177,\n      \"compilerVersion\": \"v0.8.16+commit.07a7930e\",\n      \"deployer\": null,\n      \"isVerified\": true,\n      \"hasSelfdestruct\": false,\n      \"hasDelegatecall\": false,\n      \"hasCreate2\": false,\n      \"similarityFlags\": [],\n      \"knownSignatures\": []\n    },\n    \"dataCompleteness\": {\n      \"reportedTxCount\": 267575,\n      \"fetchedTxCount\": 0,\n      \"completenessPct\": 0,\n      \"partialReason\": \"heavy_contract_overview\"\n    }\n  }\n}"
             }
           ]
         },
@@ -729,7 +675,263 @@
                 }
               ]
             }
-          }
+          },
+          "response": [
+            {
+              "name": "200 Verified smart contract (normal)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{paid_api_key}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/check/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48?network=eth",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "check",
+                    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+                  ],
+                  "query": [
+                    {
+                      "key": "network",
+                      "value": "eth"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"address\": \"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\n    \"network\": \"eth\",\n    \"riskScore\": 5,\n    \"riskLevel\": \"low\",\n    \"addressInfo\": {\n      \"type\": \"smart_contract\",\n      \"balance\": \"0 ETH\",\n      \"txCount\": 412,\n      \"firstSeen\": \"2020-06-09T18:43:35Z\",\n      \"lastSeen\": \"2026-04-25T10:11:02Z\"\n    },\n    \"patternFlags\": [],\n    \"contractAnalysis\": {\n      \"contractName\": \"FiatTokenV2_2\",\n      \"bytecodeSize\": 24576,\n      \"compilerVersion\": \"v0.6.12+commit.27d51765\",\n      \"deployer\": \"0x95Ba4cF87D6723ad9C0Db21737D862bE80e93911\",\n      \"isVerified\": true,\n      \"hasSelfdestruct\": false,\n      \"hasDelegatecall\": true,\n      \"hasCreate2\": false,\n      \"similarityFlags\": [\"ERC20\", \"Upgradeable\"],\n      \"knownSignatures\": [\"transfer(address,uint256)\", \"approve(address,uint256)\", \"balanceOf(address)\"]\n    },\n    \"contractInfo\": {\n      \"deployer\": \"0x95Ba4cF87D6723ad9C0Db21737D862bE80e93911\",\n      \"creationTx\": \"0xe7e0fe390354509cd08c9a0168536938600ddc552b3f7cb96030ebef62e75895\",\n      \"creationBlock\": 6082465,\n      \"isProxy\": true,\n      \"implementationAddress\": \"0xa2327a938Febf5FEC13baCFb16Ae10EcBc4cbDCF\",\n      \"contractName\": \"FiatTokenV2_2\"\n    },\n    \"dataCompleteness\": {\n      \"reportedTxCount\": 412,\n      \"fetchedTxCount\": 412,\n      \"completenessPct\": 100,\n      \"partialReason\": null\n    }\n  }\n}"
+            },
+            {
+              "name": "200 Heavy contract — overview only (heavy_contract_overview)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{paid_api_key}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/check/0x1F98431c8aD98523631AE4a59f267346ea31F984?network=eth",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "check",
+                    "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+                  ],
+                  "query": [
+                    {
+                      "key": "network",
+                      "value": "eth"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"address\": \"0x1F98431c8aD98523631AE4a59f267346ea31F984\",\n    \"network\": \"eth\",\n    \"riskScore\": null,\n    \"riskLevel\": \"low\",\n    \"addressInfo\": {\n      \"type\": \"contract\",\n      \"balance\": \"0 ETH\",\n      \"txCount\": 267575,\n      \"firstSeen\": \"2021-05-04T23:10:00Z\",\n      \"lastSeen\": \"2026-04-25T09:55:21Z\"\n    },\n    \"patternFlags\": [],\n    \"contractAnalysis\": {\n      \"contractName\": null,\n      \"bytecodeSize\": 6177,\n      \"compilerVersion\": \"v0.8.16+commit.07a7930e\",\n      \"deployer\": null,\n      \"isVerified\": true,\n      \"hasSelfdestruct\": false,\n      \"hasDelegatecall\": false,\n      \"hasCreate2\": false,\n      \"similarityFlags\": [],\n      \"knownSignatures\": []\n    },\n    \"dataCompleteness\": {\n      \"reportedTxCount\": 267575,\n      \"fetchedTxCount\": 0,\n      \"completenessPct\": 0,\n      \"partialReason\": \"heavy_contract_overview\"\n    },\n    \"partialReason\": \"heavy_contract_overview\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET /api/v1/check/status/{reportId} — async scan polling",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{paid_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check/status/{{sample_scan_status_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check",
+                "status",
+                "{{sample_scan_status_id}}"
+              ]
+            },
+            "description": "Lightweight polling for async scans returned via 202 from POST /api/v1/check. Lifecycle: queued → analyzing → complete | failed. Does NOT consume quota. Poll every ~5 seconds until status is complete or failed (typically 1–5 minutes for heavy addresses)."
+          },
+          "response": [
+            {
+              "name": "200 queued",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{paid_api_key}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/check/status/98958045-d736-4bc4-90ed-a717a9258738",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "check",
+                    "status",
+                    "98958045-d736-4bc4-90ed-a717a9258738"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"reportId\": \"98958045-d736-4bc4-90ed-a717a9258738\",\n    \"status\": \"queued\",\n    \"phase\": null,\n    \"errorMessage\": null,\n    \"riskScore\": null,\n    \"riskLevel\": null,\n    \"queuedAt\": \"2026-04-26T22:27:30Z\",\n    \"startedAt\": null,\n    \"finishedAt\": null\n  }\n}"
+            },
+            {
+              "name": "200 analyzing",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{paid_api_key}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/check/status/98958045-d736-4bc4-90ed-a717a9258738",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "check",
+                    "status",
+                    "98958045-d736-4bc4-90ed-a717a9258738"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"reportId\": \"98958045-d736-4bc4-90ed-a717a9258738\",\n    \"status\": \"analyzing\",\n    \"phase\": \"fetching_transactions\",\n    \"errorMessage\": null,\n    \"riskScore\": null,\n    \"riskLevel\": null,\n    \"queuedAt\": \"2026-04-26T22:27:30Z\",\n    \"startedAt\": \"2026-04-26T22:27:35Z\",\n    \"finishedAt\": null\n  }\n}"
+            },
+            {
+              "name": "200 complete",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{paid_api_key}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/check/status/98958045-d736-4bc4-90ed-a717a9258738",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "check",
+                    "status",
+                    "98958045-d736-4bc4-90ed-a717a9258738"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"reportId\": \"98958045-d736-4bc4-90ed-a717a9258738\",\n    \"status\": \"complete\",\n    \"phase\": null,\n    \"errorMessage\": null,\n    \"riskScore\": 5,\n    \"riskLevel\": \"low\",\n    \"queuedAt\": \"2026-04-26T22:27:30Z\",\n    \"startedAt\": \"2026-04-26T22:27:35Z\",\n    \"finishedAt\": \"2026-04-26T22:30:12Z\"\n  }\n}"
+            },
+            {
+              "name": "200 failed",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{paid_api_key}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/check/status/98958045-d736-4bc4-90ed-a717a9258738",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "check",
+                    "status",
+                    "98958045-d736-4bc4-90ed-a717a9258738"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"reportId\": \"98958045-d736-4bc4-90ed-a717a9258738\",\n    \"status\": \"failed\",\n    \"phase\": null,\n    \"errorMessage\": \"Modal upstream timeout after 5 minutes\",\n    \"riskScore\": null,\n    \"riskLevel\": null,\n    \"queuedAt\": \"2026-04-26T22:27:30Z\",\n    \"startedAt\": \"2026-04-26T22:27:35Z\",\n    \"finishedAt\": \"2026-04-26T22:32:35Z\"\n  }\n}"
+            }
+          ]
         },
         {
           "name": "POST /api/v1/check/deep — peel chain tracing",
@@ -1320,399 +1522,6 @@
                 "api",
                 "investigations",
                 "{{sample_investigation_id}}"
-              ]
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "Reports",
-      "item": [
-        {
-          "name": "GET /api/reports — list (with filters)",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/reports?limit=10&network=eth",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "reports"
-              ],
-              "query": [
-                {
-                  "key": "limit",
-                  "value": "10"
-                },
-                {
-                  "key": "network",
-                  "value": "eth"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "name": "GET /api/reports/{id} — detail",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/reports/{{sample_report_id}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "reports",
-                "{{sample_report_id}}"
-              ]
-            }
-          }
-        },
-        {
-          "name": "PATCH /api/reports/{id} — rename",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Case #123 — phishing investigation\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/reports/{{sample_report_id}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "reports",
-                "{{sample_report_id}}"
-              ]
-            }
-          }
-        },
-        {
-          "name": "GET /api/reports/{id}/graph — cached graph data",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/reports/{{sample_report_id}}/graph",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "reports",
-                "{{sample_report_id}}",
-                "graph"
-              ]
-            }
-          }
-        },
-        {
-          "name": "PATCH /api/reports/{id}/graph — update graph state",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"graphData\": {\n    \"nodes\": [],\n    \"edges\": []\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/reports/{{sample_report_id}}/graph",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "reports",
-                "{{sample_report_id}}",
-                "graph"
-              ]
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "Graph Snapshots",
-      "item": [
-        {
-          "name": "GET /api/reports/{reportId}/snapshots — list",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/reports/{{sample_report_id}}/snapshots",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "reports",
-                "{{sample_report_id}}",
-                "snapshots"
-              ]
-            }
-          }
-        },
-        {
-          "name": "POST /api/reports/{reportId}/snapshots — create",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Before expanding cluster X\",\n  \"description\": \"Baseline before manual investigation.\",\n  \"graphData\": { \"nodes\": [], \"edges\": [] }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/reports/{{sample_report_id}}/snapshots",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "reports",
-                "{{sample_report_id}}",
-                "snapshots"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.response.code === 201) {",
-                  "  const d = pm.response.json().data;",
-                  "  if (d && d.id) pm.collectionVariables.set('sample_snapshot_id', String(d.id));",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "GET /api/reports/{reportId}/snapshots/{snapshotId}",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/reports/{{sample_report_id}}/snapshots/{{sample_snapshot_id}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "reports",
-                "{{sample_report_id}}",
-                "snapshots",
-                "{{sample_snapshot_id}}"
-              ]
-            }
-          }
-        },
-        {
-          "name": "PATCH /api/reports/{reportId}/snapshots/{snapshotId}",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Updated name\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/reports/{{sample_report_id}}/snapshots/{{sample_snapshot_id}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "reports",
-                "{{sample_report_id}}",
-                "snapshots",
-                "{{sample_snapshot_id}}"
-              ]
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "Sharing",
-      "item": [
-        {
-          "name": "POST /api/reports/{id}/share — create share token",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"expiresIn\": 604800\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/reports/{{sample_report_id}}/share",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "reports",
-                "{{sample_report_id}}",
-                "share"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.response.code === 200 || pm.response.code === 201) {",
-                  "  const d = pm.response.json().data;",
-                  "  if (d && d.token) pm.collectionVariables.set('sample_share_token', d.token);",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "GET /api/reports/{id}/share — share status",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/reports/{{sample_report_id}}/share",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "reports",
-                "{{sample_report_id}}",
-                "share"
-              ]
-            }
-          }
-        },
-        {
-          "name": "GET /api/share/{token} — public view (no auth)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/share/{{sample_share_token}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "share",
-                "{{sample_share_token}}"
-              ]
-            },
-            "description": "Public endpoint — no auth. Anyone with the share token can view the report."
-          }
-        },
-        {
-          "name": "GET /api/share/{token}/graph — public graph",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/share/{{sample_share_token}}/graph",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "share",
-                "{{sample_share_token}}",
-                "graph"
               ]
             }
           }
@@ -2437,78 +2246,6 @@
       "description": "Every request here removes data or changes a resource irreversibly. Double-check the {{sample_*}} id variables before running — you might overwrite state you care about. Where possible, test against dummy records first.",
       "item": [
         {
-          "name": "DELETE /api/reports/{id}",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/reports/{{sample_report_id}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "reports",
-                "{{sample_report_id}}"
-              ]
-            }
-          }
-        },
-        {
-          "name": "DELETE /api/reports/{reportId}/snapshots/{snapshotId}",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/reports/{{sample_report_id}}/snapshots/{{sample_snapshot_id}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "reports",
-                "{{sample_report_id}}",
-                "snapshots",
-                "{{sample_snapshot_id}}"
-              ]
-            }
-          }
-        },
-        {
-          "name": "DELETE /api/reports/{id}/share — revoke share token",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/reports/{{sample_report_id}}/share",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "reports",
-                "{{sample_report_id}}",
-                "share"
-              ]
-            }
-          }
-        },
-        {
           "name": "DELETE /api/watchlist/{id}",
           "request": {
             "method": "DELETE",
@@ -2601,107 +2338,6 @@
               ]
             },
             "description": "Archives the investigation (soft removal from active list)."
-          }
-        },
-        {
-          "name": "DELETE /api/user/risk-settings — reset to defaults",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/user/risk-settings",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "user",
-                "risk-settings"
-              ]
-            }
-          }
-        },
-        {
-          "name": "DELETE /api/user/branding — reset to defaults",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/user/branding",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "user",
-                "branding"
-              ]
-            }
-          }
-        },
-        {
-          "name": "DELETE /api/user/report-layout — reset to defaults",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/user/report-layout",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "user",
-                "report-layout"
-              ]
-            }
-          }
-        },
-        {
-          "name": "DELETE /api/user/account — permanently delete account",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"password\": \"your-password\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/user/account",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "user",
-                "account"
-              ]
-            },
-            "description": "PERMANENT. Deletes the user, all API keys, all saved reports. Password confirmation required. After success, the API key you authenticated with is also invalidated."
           }
         }
       ]
