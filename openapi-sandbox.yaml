@@ -37,7 +37,12 @@ info:
 
     Send your key in the `Authorization` header:
 
-        Authorization: Bearer ocr_live_...
+        Authorization: Bearer ocr_test_...
+
+    New sandbox keys minted by the dashboard use the `ocr_test_*` prefix.
+    Sandbox keys created before the prefix split remain valid and may
+    appear with the legacy `ocr_live_*` prefix; either form authenticates
+    as a sandbox key based on the underlying key tier.
 
     ## Rate Limits
 
@@ -214,7 +219,7 @@ components:
     ApiKeyAuth:
       type: http
       scheme: bearer
-      bearerFormat: ocr_live_*
+      bearerFormat: ocr_test_* (legacy keys may still use ocr_live_*)
 
   responses:
     Unauthorized:
