@@ -13,9 +13,9 @@
     },
     {
       "key": "sandbox_api_key",
-      "value": "ocr_live_REPLACE_ME",
+      "value": "ocr_test_REPLACE_ME",
       "type": "string",
-      "description": "Your sandbox API key. Create one in the dashboard: https://onchainrisk.io/dashboard/api-keys"
+      "description": "Your sandbox API key. New sandbox keys use the ocr_test_ prefix; legacy sandbox keys may still carry ocr_live_ and continue to authenticate as sandbox. Create one in the dashboard: https://onchainrisk.io/dashboard/api-keys"
     },
     {
       "key": "sample_address",
