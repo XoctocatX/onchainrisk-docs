@@ -699,6 +699,170 @@ paths:
                   networks: { type: object }
                   compositeRiskScore: { type: integer }
 
+  # ── Usage / quota introspection ───────────────────────
+  /api/v1/usage:
+    get:
+      tags: [Account]
+      summary: Get current API usage and quota
+      description: |
+        Read-only quota and usage state for the authenticated API key (or
+        session). Use this to check remaining checks before scheduling a
+        scan, or to surface quota in your own dashboard.
+
+        Authentication accepts paid API keys, sandbox API keys (read-only
+        introspection — sandbox cannot use other paid /api/v1/* compute
+        endpoints), and browser session JWT.
+
+        Quota semantics:
+          - `plan_quota` is the recurring plan-included check quota.
+            Paid plans (pro, business, enterprise) have a monthly window.
+            Free has a rolling 24-hour window.
+          - `purchased_credits.available` is the standalone credit balance,
+            independent of `plan_quota.used`. Credits are consumed only
+            after `plan_quota` is exhausted (or via `?source=credits`).
+          - `rate_limit.requests_per_second` is throughput (per-plan tier),
+            independent of `plan_quota`.
+          - Enterprise plans return `plan_quota.limit = null` and
+            `plan_quota.remaining = null` (unlimited). The internal
+            sentinel value 999999 is never exposed.
+      security:
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Current usage and quota
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    required: [plan, key_type, billing_period, plan_quota, purchased_credits, rate_limit]
+                    properties:
+                      plan:
+                        type: string
+                        enum: [free, pro, business, enterprise]
+                        example: pro
+                      key_type:
+                        type: string
+                        enum: [paid, sandbox]
+                        nullable: true
+                        description: Type of API key. `null` when authenticated via session JWT.
+                        example: paid
+                      billing_period:
+                        type: object
+                        required: [type, start, end]
+                        properties:
+                          type:
+                            type: string
+                            enum: [monthly, rolling_24h, none]
+                            example: monthly
+                          start:
+                            type: string
+                            format: date-time
+                            nullable: true
+                            description: ISO-8601 UTC. Null for `rolling_24h` and `none`.
+                          end:
+                            type: string
+                            format: date-time
+                            nullable: true
+                            description: ISO-8601 UTC. Null for `rolling_24h` and `none`.
+                      plan_quota:
+                        type: object
+                        required: [used, limit, remaining]
+                        properties:
+                          used:
+                            type: integer
+                            description: Plan quota checks consumed in current window.
+                            example: 12
+                          limit:
+                            type: integer
+                            nullable: true
+                            description: Plan quota cap. `null` for enterprise (unlimited).
+                            example: 1000
+                          remaining:
+                            type: integer
+                            nullable: true
+                            description: max(0, limit - used). `null` when limit is null.
+                            example: 988
+                      purchased_credits:
+                        type: object
+                        required: [available]
+                        properties:
+                          available:
+                            type: integer
+                            description: Standalone purchased-credit balance, separate from plan_quota.
+                            example: 50
+                      rate_limit:
+                        type: object
+                        required: [requests_per_second]
+                        properties:
+                          requests_per_second:
+                            type: integer
+                            description: Per-plan throughput cap.
+                            example: 10
+              examples:
+                pro:
+                  summary: Pro plan with 12 checks used and 50 purchased credits
+                  value:
+                    success: true
+                    data:
+                      plan: pro
+                      key_type: paid
+                      billing_period:
+                        type: monthly
+                        start: "2026-04-01T00:00:00.000Z"
+                        end:   "2026-05-01T00:00:00.000Z"
+                      plan_quota:
+                        used: 12
+                        limit: 1000
+                        remaining: 988
+                      purchased_credits:
+                        available: 50
+                      rate_limit:
+                        requests_per_second: 10
+                free:
+                  summary: Free plan (rolling 24h window)
+                  value:
+                    success: true
+                    data:
+                      plan: free
+                      key_type: null
+                      billing_period:
+                        type: rolling_24h
+                        start: null
+                        end:   null
+                      plan_quota:
+                        used: 3
+                        limit: 10
+                        remaining: 7
+                      purchased_credits:
+                        available: 0
+                      rate_limit:
+                        requests_per_second: 1
+                enterprise:
+                  summary: Enterprise plan (unlimited — no internal sentinel exposed)
+                  value:
+                    success: true
+                    data:
+                      plan: enterprise
+                      key_type: paid
+                      billing_period:
+                        type: monthly
+                        start: "2026-04-01T00:00:00.000Z"
+                        end:   "2026-05-01T00:00:00.000Z"
+                      plan_quota:
+                        used: 4521
+                        limit: null
+                        remaining: null
+                      purchased_credits:
+                        available: 0
+                      rate_limit:
+                        requests_per_second: 100
+        '401':
+          description: Authentication required or invalid API key
+
   # ── AI Investigation ──────────────────────────────────
   /api/investigate:
     post:
@@ -1691,7 +1855,34 @@ components:
             txCount: { type: integer }
             firstSeen: { type: string, nullable: true }
             lastSeen: { type: string, nullable: true }
-        patternFlags: { type: array, items: { type: string }, example: ["TRANSIT_WALLET", "KNOWN_MIXER"] }
+        patternFlags:
+          type: array
+          items: { type: string }
+          description: |
+            Legacy display strings, kept for backward compatibility. For
+            localization use `code` / `templateKey` from `patternFlagDetails`
+            (index-aligned with this array).
+          example: ["BULK COLLECTION pattern: 24 inbound TXs in 600s", "OFAC/sanctions list match"]
+        patternFlagDetails:
+          type: array
+          description: |
+            Localization-friendly metadata, index-aligned with `patternFlags`.
+            Use `code` / `templateKey` for translation/mapping. `defaultEn` is
+            a display fallback only (may include dynamic values; not stable
+            across releases).
+          items:
+            $ref: '#/components/schemas/FlagDetail'
+          example:
+            - code: bulk_collection
+              templateKey: pattern.bulk_collection
+              defaultEn: "BULK COLLECTION pattern: 24 inbound TXs in 600s"
+              severity: medium
+              description: "Many sources sent funds within a short window (bulk collection)."
+            - code: ofac_sanctions_match
+              templateKey: pattern.ofac_sanctions_match
+              defaultEn: "OFAC/sanctions list match"
+              severity: critical
+              description: "Address matches an OFAC/sanctions list."
         topCounterparties:
           type: array
           items:
@@ -1736,7 +1927,32 @@ components:
             txHash: { type: string }
             timestamp: { type: integer }
             value: { type: string }
-        timing: { type: object, nullable: true }
+        timing:
+          type: object
+          nullable: true
+          description: |
+            Transaction timing analysis. Includes legacy `botFlags` (display
+            strings) and `botFlagDetails` (localization-friendly metadata,
+            index-aligned with `botFlags`). Other fields (hourly/daily
+            distribution, regularityScore, etc.) are returned as-is from
+            the analyzer.
+          properties:
+            botFlags:
+              type: array
+              items: { type: string }
+              description: Legacy display strings, kept for backward compatibility. For localization use `code` / `templateKey` from `botFlagDetails`.
+              example: ["Active across 22+ hours daily — likely automated"]
+            botFlagDetails:
+              type: array
+              description: Localization-friendly metadata, index-aligned with `botFlags`.
+              items:
+                $ref: '#/components/schemas/FlagDetail'
+              example:
+                - code: always_on_24h
+                  templateKey: bot.always_on_24h
+                  defaultEn: "Active across 22+ hours daily — likely automated"
+                  severity: medium
+                  description: "Address is active for ~22+ hours per day, suggesting automation."
         crossChain: { type: object, nullable: true }
         exchangeDeposits: { type: object, nullable: true }
         defiSwaps: { type: object, nullable: true }
@@ -1933,6 +2149,39 @@ components:
         - fiat_ramp
         - payment_processor
         - unknown
+
+    FlagDetail:
+      type: object
+      required: [code, templateKey, defaultEn]
+      description: |
+        Localization-friendly flag metadata. Use `code` / `templateKey` for
+        translation/mapping. `defaultEn` is a display fallback only — it
+        may include dynamic values and is not stable across releases.
+        Pattern flags use the `pattern.*` namespace; bot flags (under
+        `timing.botFlagDetails`) use the `bot.*` namespace.
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable identifier. Use this for translation/mapping.
+          example: bulk_collection
+        templateKey:
+          type: string
+          description: Namespaced i18n key. `pattern.<code>` for pattern flags, `bot.<code>` for bot flags.
+          example: pattern.bulk_collection
+        defaultEn:
+          type: string
+          description: Current English display fallback. May include dynamic values. Do not use as translation key.
+          example: "BULK COLLECTION pattern: 24 inbound TXs in 600s"
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+          nullable: true
+          example: medium
+        description:
+          type: string
+          nullable: true
+          description: Short stable English explanation of the flag meaning.
+          example: "Many sources sent funds within a short window (bulk collection)."
 
     AddressConnection:
       type: object
