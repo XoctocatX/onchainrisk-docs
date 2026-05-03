@@ -672,6 +672,63 @@
       ]
     },
     {
+      "name": "4. Graph preview — sample (depth=1, last 7d)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\",\n  \"depth\": 1\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/sandbox/graph/expand",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "sandbox",
+            "graph",
+            "expand"
+          ]
+        },
+        "description": "Cheap sandbox graph preview. Depth 1, last 7 days, ≤20 nodes, ≤30 edges. Aggregated counterparty edges in the same shape as paid /api/graph/expand. No report persistence, no usage row, no credit charge. Upgrade for full historical graph expansion."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const d = pm.response.json().data;",
+              "pm.test('nodes is array', () => pm.expect(d.nodes).to.be.an('array'));",
+              "pm.test('edges is array', () => pm.expect(d.edges).to.be.an('array'));",
+              "pm.test('nodes <= 20', () => pm.expect(d.nodes.length).to.be.at.most(20));",
+              "pm.test('edges <= 30', () => pm.expect(d.edges.length).to.be.at.most(30));",
+              "pm.test('_sandbox.profile = sandbox', () => pm.expect(d._sandbox.profile).to.equal('sandbox'));",
+              "pm.test('_sandbox.coverage_days = 7', () => pm.expect(d._sandbox.coverage_days).to.equal(7));",
+              "pm.test('_sandbox.limits.depth = 1', () => pm.expect(d._sandbox.limits.depth).to.equal(1));",
+              "pm.test('_sandbox.limits.max_nodes = 20', () => pm.expect(d._sandbox.limits.max_nodes).to.equal(20));",
+              "pm.test('_sandbox.limits.max_edges = 30', () => pm.expect(d._sandbox.limits.max_edges).to.equal(30));",
+              "pm.test('_sandbox.gated_fields includes clusters', () => pm.expect(d._sandbox.gated_fields).to.include('clusters'));",
+              "pm.test('reports_saved = false', () => pm.expect(d._sandbox.reports_saved).to.equal(false));"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "5. Blocked endpoint — /check/deep returns 403",
       "request": {
         "method": "POST",
