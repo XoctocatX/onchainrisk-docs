@@ -128,6 +128,11 @@ servers:
 tags:
   - name: Analysis
     description: Address risk analysis (sandbox profile)
+  - name: Graph
+    description: |
+      Transaction graph preview (sandbox profile). Limited to depth 1,
+      last 7 days, capped nodes/edges. Upgrade for full historical graph
+      expansion via paid `/api/graph/expand`.
   - name: Account
     description: Current user profile and usage
 
@@ -176,6 +181,107 @@ paths:
           $ref: '#/components/responses/ValidationFailed'
         '429':
           $ref: '#/components/responses/RateLimited'
+
+  /api/v1/sandbox/graph/expand:
+    post:
+      operationId: sandboxGraphExpand
+      tags: [Graph]
+      summary: Sandbox graph preview (depth=1, last 7 days, capped)
+      description: |
+        Sandbox graph preview is for **integration testing**. It is limited
+        to depth 1, recent activity, and capped nodes/edges. Upgrade for
+        full historical graph expansion via paid `/api/graph/expand`.
+
+        Returns a node/edge graph in the same broad shape as paid
+        `/api/graph/expand` (aggregated counterparty edges with
+        `from`/`to`/`value`/`valueWei`/`txCount`/`firstTx`/`lastTx`/
+        `tokenBreakdown`) so a sandbox client can be re-pointed at paid
+        without rewriting response handling.
+
+        ### Sandbox limits
+        - `depth`: max 1 (silently clamped; reported in `_sandbox.truncated_fields.depth`)
+        - `nodes`: max 20
+        - `edges`: max 30
+        - History window: last 7 days only
+        - Tx fetch cap: 100 per request
+        - No clusters, no entity expansion, no cross-chain graph, no AI
+        - **No report persistence**, **no usage row**, **no credit charge**
+
+        ### Supported networks
+        EVM family — `eth`, `arbitrum`, `optimism`, `base`, `polygon`,
+        `avalanche`, `linea`, `zksync`, `scroll`, `celo`, `cronos`,
+        `fantom`, `moonbeam`, `polygon_zkevm`, plus `bsc` and `tron`.
+        Other networks (sol, btc, ltc, ton, cosmos, cardano, xrp) return
+        **422** with `details.errorCode = "NETWORK_NOT_SUPPORTED_IN_SANDBOX"`
+        — no silent fallback to a paid traversal.
+
+        ### Auth
+        API key only (sandbox `ocr_test_*` or paid `ocr_live_*`). JWT/session
+        auth is rejected with 401 `API_KEY_REQUIRED`. Paid keys are allowed
+        so that paid customers can integrate-test against the sandbox shape;
+        the response is always sandbox-scoped regardless of key type.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, network]
+              properties:
+                address:
+                  type: string
+                  example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+                network:
+                  type: string
+                  enum:
+                    - eth
+                    - arbitrum
+                    - optimism
+                    - base
+                    - polygon
+                    - avalanche
+                    - linea
+                    - zksync
+                    - scroll
+                    - celo
+                    - cronos
+                    - fantom
+                    - moonbeam
+                    - polygon_zkevm
+                    - bsc
+                    - tron
+                  example: "eth"
+                depth:
+                  type: integer
+                  minimum: 1
+                  maximum: 1
+                  default: 1
+                  description: |
+                    Depth is silently clamped to 1. Higher values are
+                    reported back via `_sandbox.truncated_fields.depth`.
+      responses:
+        '200':
+          description: Sandbox graph preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxGraphResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Sandbox graph preview temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: false }
+                  error: { type: string, example: "Sandbox graph preview temporarily unavailable. Please try again later." }
+                  code: { type: string, example: "SANDBOX_GRAPH_UNAVAILABLE" }
 
   # Note: /api/analyze/estimate is NOT exposed on api.onchainrisk.io. It is an
   # internal Modal preflight called by the Worker handler; direct external
@@ -433,6 +539,42 @@ components:
           type: string
           enum: [in, out, self]
 
+    FlagDetail:
+      type: object
+      required: [code, templateKey, defaultEn]
+      description: |
+        Localization-friendly flag metadata. Use `code` / `templateKey` for
+        translation/mapping. `defaultEn` is a display fallback only — it
+        may include dynamic values and is not stable across releases.
+        Pattern flags use the `pattern.*` namespace; bot flags would use
+        `bot.*` (NOT applicable in sandbox — `timing` is null-gated and
+        thus `botFlagDetails` is not present in sandbox responses).
+        Schema is identical to the paid /api/v1/check FlagDetail
+        component (parity-tested).
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable identifier. Use this for translation/mapping.
+          example: bulk_collection
+        templateKey:
+          type: string
+          description: Namespaced i18n key. `pattern.<code>` for pattern flags.
+          example: pattern.bulk_collection
+        defaultEn:
+          type: string
+          description: Current English display fallback. May include dynamic values. Do not use as translation key.
+          example: "BULK COLLECTION pattern: 24 inbound TXs in 600s"
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+          nullable: true
+          example: medium
+        description:
+          type: string
+          nullable: true
+          description: Short stable English explanation of the flag meaning.
+          example: "Many sources sent funds within a short window (bulk collection)."
+
     SandboxCheckResponse:
       type: object
       description: |
@@ -482,7 +624,36 @@ components:
           type: array
           items: { type: string }
           maxItems: 5
-          description: Capped at the top 5 flags in sandbox.
+          description: |
+            Legacy display strings, capped at the top 5 flags in sandbox.
+            For localization use `code` / `templateKey` from the
+            index-aligned `patternFlagDetails` array.
+        patternFlagDetails:
+          type: array
+          maxItems: 5
+          description: |
+            Localization-friendly metadata for patternFlags. Capped at the
+            same top 5 items and INDEX-ALIGNED with `patternFlags`
+            (`patternFlagDetails[i]` corresponds to `patternFlags[i]`).
+            Use `code` / `templateKey` for translation/mapping.
+            `defaultEn` is a display fallback only — may include dynamic
+            values; not stable across releases.
+            Note: in sandbox `timing` is null-gated, so `botFlagDetails`
+            (which lives inside `timing` for paid responses) is NOT
+            present in sandbox.
+          items:
+            $ref: '#/components/schemas/FlagDetail'
+          example:
+            - code: bulk_collection
+              templateKey: pattern.bulk_collection
+              defaultEn: "BULK COLLECTION pattern: 24 inbound TXs in 600s"
+              severity: medium
+              description: "Many sources sent funds within a short window (bulk collection)."
+            - code: ofac_sanctions_match
+              templateKey: pattern.ofac_sanctions_match
+              defaultEn: "OFAC/sanctions list match"
+              severity: critical
+              description: "Address matches an OFAC/sanctions list."
         transactionHistory:
           type: array
           description: In sandbox, only transactions from the last 7 days.
@@ -609,6 +780,153 @@ components:
           type: object
           additionalProperties: { type: string }
           description: Map of field name to truncation reason.
+        upgrade_url: { type: string, format: uri }
+        docs_url: { type: string, format: uri }
+
+    SandboxGraphResponse:
+      type: object
+      description: |
+        Sandbox graph preview response. Aggregated counterparty edges in
+        the same broad shape as paid `/api/graph/expand`, capped to 20
+        nodes / 30 edges and windowed to the last 7 days. Integrators can
+        re-point clients at paid `/api/graph/expand` later without
+        rewriting response handling.
+
+        **Window invariant**: every aggregated edge field
+        (`txCount`, `value`, `valueWei`, `firstTx`, `lastTx`,
+        `tokenBreakdown`) reflects ONLY transactions whose timestamp
+        falls inside the 7-day window. A counterparty whose only
+        interaction is older than 7 days is absent from the response;
+        a counterparty with mixed history shows the recent-only slice.
+      required: [success, data]
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: object
+          required: [address, network, nodes, edges, _sandbox]
+          properties:
+            address: { type: string }
+            network: { type: string }
+            nodes:
+              type: array
+              maxItems: 20
+              items: { $ref: '#/components/schemas/SandboxGraphNode' }
+            edges:
+              type: array
+              maxItems: 30
+              items: { $ref: '#/components/schemas/SandboxGraphEdge' }
+            partial:
+              type: boolean
+              description: |
+                True when at least one of: tx fetch hit the cap, nodes
+                were truncated, edges were truncated, or Modal flagged
+                the response as partial.
+            _sandbox:
+              $ref: '#/components/schemas/SandboxGraphMarker'
+
+    SandboxGraphNode:
+      type: object
+      description: |
+        Counterparty node. Schema mirrors paid `/api/graph/expand` node
+        shape so a sandbox client can switch to paid without changes.
+      required: [address]
+      properties:
+        address: { type: string }
+        label: { type: [string, 'null'] }
+        isTarget: { type: boolean, default: false }
+        totalValue:
+          type: string
+          description: |
+            Native value formatted (e.g. "1.5" ETH/BNB/TRX). String to
+            preserve precision across networks.
+        txCount: { type: integer, minimum: 0 }
+        tokens:
+          type: array
+          items: { type: string }
+
+    SandboxGraphEdge:
+      type: object
+      description: |
+        Aggregated edge between target and counterparty. Same field names
+        as paid `/api/graph/expand` edges. Sandbox-only deviations are
+        documented per-field below.
+      required: [from, to, value, valueWei, txCount]
+      properties:
+        from: { type: string }
+        to: { type: string }
+        fromLabel: { type: [string, 'null'] }
+        toLabel: { type: [string, 'null'] }
+        value:
+          type: string
+          description: Native value formatted; sandbox windowed to last 7 days.
+        valueWei:
+          type: string
+          description: Native value in raw integer units.
+        txCount: { type: integer, minimum: 1 }
+        firstTx:
+          type: [integer, 'null']
+          description: Unix timestamp of first interaction within the 7d window.
+        lastTx:
+          type: [integer, 'null']
+          description: Unix timestamp of last interaction within the 7d window.
+        tokenBreakdown:
+          type: array
+          description: Per-token volume breakdown (subset in sandbox).
+          items:
+            type: object
+
+    SandboxGraphMarker:
+      type: object
+      description: |
+        Sandbox marker for graph preview responses. Distinct from
+        `SandboxMarker` (which is shaped for `/api/v1/check`). Both share
+        `profile`, `coverage_days`, `gated_fields`, `truncated_fields`,
+        `upgrade_url`, `docs_url`; this variant adds graph-specific
+        `limits` and `partial`.
+      required:
+        - profile
+        - coverage_days
+        - reports_saved
+        - limits
+        - truncated_fields
+        - gated_fields
+        - upgrade_url
+        - docs_url
+      properties:
+        profile:
+          type: string
+          enum: [sandbox]
+        coverage_days:
+          type: integer
+          enum: [7]
+        reports_saved:
+          type: boolean
+          enum: [false]
+        partial:
+          type: boolean
+          description: Mirrors `data.partial` for clients that read the marker.
+        limits:
+          type: object
+          required: [depth, max_nodes, max_edges]
+          properties:
+            depth: { type: integer, enum: [1] }
+            max_nodes: { type: integer, enum: [20] }
+            max_edges: { type: integer, enum: [30] }
+        truncated_fields:
+          type: object
+          additionalProperties: { type: string }
+          description: |
+            Map of field-name → truncation reason. Always includes
+            `history: "last_7_days"`. Adds `depth: "max_1"` when the
+            request asked for depth > 1, `nodes: "max_20"` when nodes
+            were truncated, `edges: "max_30"` when edges were truncated.
+        gated_fields:
+          type: array
+          items: { type: string }
+          description: |
+            Paid-only fields not present in the sandbox graph response —
+            includes `clusters`, `entityExpansion`, `crossChainGraph`,
+            `historicalTraversal`, `aiSummary`.
         upgrade_url: { type: string, format: uri }
         docs_url: { type: string, format: uri }
 
