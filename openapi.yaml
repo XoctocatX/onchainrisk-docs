@@ -44,7 +44,7 @@ info:
 
     ## Validation errors
 
-    Address validation runs before any blockchain scan. On failure the Worker
+    Address validation runs before any blockchain scan. On failure the API
     returns **HTTP 422** (not 400) with the following stable envelope:
 
     ```json
@@ -100,7 +100,7 @@ info:
     | Cronos | `cronos` | Layer 1 |
     | Fantom | `fantom` | Layer 1 |
     | Moonbeam | `moonbeam` | Parachain |
-    | Polygon zkEVM | `polygon-zkevm` | Layer 2 |
+    | Polygon zkEVM | `polygon_zkevm` | Layer 2 |
     | Cosmos | `cosmos` | Layer 1 |
     | Cardano | `cardano` | Layer 1 |
     | XRP | `xrp` | Layer 1 |
@@ -194,7 +194,7 @@ paths:
                 network:
                   type: string
                   description: Network code (auto-detected if omitted)
-                  enum: [eth, bsc, tron, btc, ltc, sol, ton, arbitrum, optimism, base, polygon, avalanche, linea, zksync, scroll, celo, cronos, fantom, moonbeam, polygon-zkevm, cosmos, cardano, xrp]
+                  enum: [eth, bsc, tron, btc, ltc, sol, ton, arbitrum, optimism, base, polygon, avalanche, linea, zksync, scroll, celo, cronos, fantom, moonbeam, polygon_zkevm, cosmos, cardano, xrp]
                   example: eth
       responses:
         '200':
@@ -445,7 +445,7 @@ paths:
                       reportId: "98958045-d736-4bc4-90ed-a717a9258738"
                       status: failed
                       phase: null
-                      errorMessage: "Modal upstream timeout after 5 minutes"
+                      errorMessage: "Upstream analysis timeout after 5 minutes"
                       riskScore: null
                       riskLevel: null
                       queuedAt: "2026-04-26T22:27:30Z"
@@ -494,6 +494,27 @@ paths:
                         depth: { type: integer }
         '422':
           $ref: '#/components/responses/ValidationFailed'
+          # Includes deep-analysis-unsupported-network example
+          # (`error.details.errorCode = DEEP_ANALYSIS_UNSUPPORTED_NETWORK`)
+          # for permanent network gates. Pre-2026-05-15 these returned
+          # 503 DEEP_ANALYSIS_UNAVAILABLE — fixed in Task #56.
+        '503':
+          description: |
+            Transient upstream failure (timeout, Modal 5xx, network
+            connectivity). Retry with backoff is appropriate. Permanent
+            unsupported-network errors are 422, not 503 — see the
+            `deep-analysis-unsupported-network` example above.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: false }
+                  error:
+                    type: object
+                    properties:
+                      message: { type: string }
+                      code: { type: string, example: "DEEP_ANALYSIS_UNAVAILABLE" }
 
   /api/v1/token/check:
     post:
@@ -513,7 +534,14 @@ paths:
               required: [address, network]
               properties:
                 address: { type: string, description: "Token contract address" }
-                network: { type: string, enum: [eth, bsc, arbitrum, optimism, base, polygon, avalanche, linea, zksync, scroll, celo, cronos, fantom, moonbeam, polygon-zkevm] }
+                network:
+                  type: string
+                  enum: [eth, bsc, arbitrum, optimism, base, polygon, avalanche, linea, zksync]
+                  description: |
+                    Networks where token analysis is production-verified.
+                    Other networks (scroll, celo, cronos, fantom, moonbeam,
+                    polygon_zkevm, and non-EVM chains) return 422
+                    NETWORK_NOT_SUPPORTED_FOR_TOKEN_CHECK.
       responses:
         '200':
           description: Token security analysis
@@ -559,7 +587,9 @@ paths:
       tags: [Analysis]
       summary: Block MEV analysis
       description: |
-        Analyze all transactions in a block for MEV patterns: sandwich attacks, arbitrage, flash loans, JIT liquidity, and liquidations. Supports 10 EVM networks. **Costs 1 credit.** Auto-saves the block report; the response includes `reportPublicId` for retrieval via `GET /api/v1/block/reports/{id}`.
+        Analyze all transactions in a block for MEV patterns: sandwich attacks, arbitrage, flash loans, JIT liquidity, and liquidations. **Costs 1 credit.** Auto-saves the block report; the response includes `reportPublicId` for retrieval via `GET /api/v1/block/reports/{id}`.
+
+        Supported networks: `eth`, `arbitrum`, `optimism`, `avalanche`, `scroll`, `linea`, `zksync`, `bsc`, `polygon`, `base` — all 10 EVM block-analyze networks. Future block (block number greater than current chain tip) returns 404 `BLOCK_NOT_FOUND`. Generic upstream failures return 503 `BLOCK_ANALYZE_UNAVAILABLE`.
 
         Client-side idempotency is not currently supported. Repeated or concurrent successful requests may be billed separately.
       security:
@@ -574,7 +604,16 @@ paths:
               required: [blockNumber, network]
               properties:
                 blockNumber: { type: integer, minimum: 0 }
-                network: { type: string, enum: [eth, bsc, arbitrum, optimism, base, polygon, avalanche, scroll, linea, zksync] }
+                network:
+                  type: string
+                  enum: [eth, arbitrum, optimism, avalanche, scroll, linea, zksync, bsc, polygon, base]
+                  description: |
+                    All 10 EVM block-analyze networks are supported.
+                    `bsc` and `polygon` were re-enabled 2026-05-05 (Phase 2b)
+                    after the PoA / extended-extraData middleware fix.
+                    `base` was re-enabled 2026-05-05 (Phase 2c) after the
+                    Modal BASE_RPC_URL secret was rotated to the official
+                    public Base RPC.
       responses:
         '200':
           description: Block analysis with MEV detection (auto-saved as a block report)
@@ -596,8 +635,8 @@ paths:
   # duplicate that used `processing` instead of `analyzing` in the enum.
 
   # Internal endpoints intentionally NOT documented here:
-  # - /api/analyze/estimate — Modal preflight called by Worker internally; Worker
-  #   does not route this path at api.onchainrisk.io (direct external calls 404).
+  # - /api/analyze/estimate — internal preflight; not exposed at
+  #   api.onchainrisk.io (direct external calls 404).
   # - /api/v1/telemetry/archetype — dashboard client telemetry for AI archetype
   #   learning loop; not part of the public integration API.
   # - /api/admin/* — internal surface
@@ -674,6 +713,11 @@ paths:
                   reportId: { type: integer }
                   status: { type: string, enum: [analyzing] }
                   cost: { type: integer, example: 5 }
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+          # Malformed JSON, null/non-object body, invalid address, or
+          # empty/missing networks all return 422 VALIDATION_ERROR with
+          # an explicit `error.details.body | address | networks` message.
 
   /api/v1/multichain/analyze/{reportId}:
     get:
@@ -862,6 +906,131 @@ paths:
                         requests_per_second: 100
         '401':
           description: Authentication required or invalid API key
+
+  /api/v1/webhook/deliveries:
+    get:
+      tags: [Account]
+      summary: List webhook delivery audit (#41 Phase 1)
+      description: |
+        Per-user webhook delivery audit, newest first. One row per
+        `event_id`; status reflects current state across retries.
+
+        Use this to debug "did my webhook actually arrive" — the row
+        carries the result of every attempt path: 2xx delivered, 5xx/429
+        scheduled retry, 4xx terminal failure, 410 disabled, network/TLS
+        timeout retry.
+
+        Privacy: response carries `endpoint_host` (hostname) only. Full
+        webhook URL, secret, and request payload bytes are NEVER returned.
+        Configure your webhook URL via `PATCH /api/notifications/settings`.
+
+        Pagination: cursor-based on `id` (descending). When `next_cursor`
+        is non-null, pass it back as `?cursor=<value>` for the next page.
+
+        Authentication accepts paid API keys, sandbox API keys (read-only
+        introspection), and browser session JWT.
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [delivering, delivered, retry_scheduled, failed, disabled]
+          description: Filter to a single delivery status.
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+          description: Page size (default 20, max 100).
+        - in: query
+          name: cursor
+          schema:
+            type: string
+          description: Pagination cursor returned by the previous page (`next_cursor`).
+      responses:
+        '200':
+          description: Audit page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    required: [deliveries, next_cursor]
+                    properties:
+                      deliveries:
+                        type: array
+                        items:
+                          type: object
+                          required: [event_id, event_type, status, attempts_count, endpoint_host, created_at, updated_at]
+                          properties:
+                            event_id:
+                              type: string
+                              example: wh_alert_12345_v1
+                            event_type:
+                              type: string
+                              enum: [watchlist_alert, test]
+                              example: watchlist_alert
+                            alert_id:
+                              type: integer
+                              nullable: true
+                              description: Linked watchlist_alert id; null for test deliveries.
+                            endpoint_host:
+                              type: string
+                              description: Hostname of the configured receiver. Full URL never returned.
+                              example: receiver.example.com
+                            status:
+                              type: string
+                              enum: [delivering, delivered, retry_scheduled, failed, disabled]
+                            attempts_count:
+                              type: integer
+                              minimum: 0
+                              example: 1
+                            next_retry_at:
+                              type: string
+                              format: date-time
+                              nullable: true
+                              description: ISO-8601 UTC. Non-null only when status=retry_scheduled.
+                            last_attempt_at:
+                              type: string
+                              format: date-time
+                              nullable: true
+                              description: ISO-8601 UTC of most recent delivery attempt.
+                            last_http_status:
+                              type: integer
+                              nullable: true
+                              description: HTTP status from last attempt; null on network-level failure.
+                              example: 200
+                            last_error_class:
+                              type: string
+                              nullable: true
+                              description: Error category (e.g. http_2xx, http_5xx, http_429, http_4xx_terminal, http_410_gone, AbortError, TypeError). Never carries response body.
+                              example: http_2xx
+                            delivered_at:
+                              type: string
+                              format: date-time
+                              nullable: true
+                              description: ISO-8601 UTC; set once on first 2xx, never cleared.
+                            created_at:
+                              type: string
+                              format: date-time
+                            updated_at:
+                              type: string
+                              format: date-time
+                      next_cursor:
+                        type: string
+                        nullable: true
+                        description: Pass to `?cursor=` for the next page; null when no more pages.
+        '401':
+          description: Authentication required or invalid API key
+        '422':
+          description: Invalid query parameter (e.g. unsupported status)
 
   # ── AI Investigation ──────────────────────────────────
   /api/investigate:
@@ -1161,6 +1330,15 @@ paths:
     patch:
       tags: [Notifications]
       summary: Update notification settings
+      description: |
+        Account-level notification configuration. Used by watchlist alert
+        delivery (per-item `notify_email` / `notify_telegram` / `notify_webhook`
+        flags decide which channels fire for that address).
+
+        All fields are optional; PATCH semantics — provided fields are
+        updated, omitted fields are preserved. Webhook delivery to the
+        configured URL is signed with HMAC SHA-256 (`X-Signature-256` header)
+        when `webhook_secret` is set. See `docs/integration/webhooks.md`.
       security:
         - apiKeyAuth: []
       requestBody:
@@ -1169,10 +1347,42 @@ paths:
           application/json:
             schema:
               type: object
+              description: |
+                Partial update. All fields optional. The values returned by
+                `GET /api/notifications/settings` mirror the persisted state.
               properties:
-                email_enabled: { type: boolean }
-                webhook_url: { type: string, format: uri }
-                webhook_enabled: { type: boolean }
+                email_enabled:
+                  type: boolean
+                  description: Email channel master toggle.
+                telegram_chat_id:
+                  type: [string, 'null']
+                  description: |
+                    Telegram chat ID (numeric string). Set after the user
+                    completes the Telegram connect flow via the dashboard.
+                    Pass `null` to clear.
+                telegram_enabled:
+                  type: boolean
+                  description: Telegram channel master toggle.
+                webhook_url:
+                  type: [string, 'null']
+                  format: uri
+                  description: |
+                    HTTPS endpoint that will receive watchlist alert POSTs.
+                    Pass `null` to clear.
+                webhook_secret:
+                  type: [string, 'null']
+                  description: |
+                    Shared secret used to compute the `X-Signature-256` HMAC
+                    header on outbound webhooks. Recommended ≥32 characters.
+                    Pass `null` to clear (webhooks will then be sent unsigned).
+                webhook_enabled:
+                  type: boolean
+                  description: Webhook channel master toggle.
+                daily_digest:
+                  type: boolean
+                  description: |
+                    Collapse email alerts into one daily summary. Webhooks
+                    remain instant regardless of this flag.
       responses:
         '200': { description: Settings saved }
 
@@ -1309,8 +1519,21 @@ paths:
   /api/graph/expand:
     post:
       tags: [Graph]
-      summary: Expand graph counterparties for an address
-      description: Fetches direct counterparties for the given address and returns nodes/edges to merge into the client graph. Costs 1 credit.
+      summary: Expand graph counterparties for an address (one-hop)
+      description: |
+        Returns direct counterparties for the given address as nodes and
+        edges to merge into the client graph.
+
+        **One-hop per call.** Multi-hop workflows are built by iterative
+        client-side calls (call this endpoint per node you want to expand).
+        There is no single-call multi-hop traversal today.
+
+        **Billing.** Calls are logged as `usage` action `graph_expand`.
+        They do **not** decrement credits and do **not** count against the
+        monthly `/api/v1/check` quota. Per-plan rate limits still apply.
+
+        See `docs/integration/capability-matrix.md` for supported networks
+        and plan rate limits.
       security:
         - apiKeyAuth: []
       requestBody:
@@ -1323,18 +1546,39 @@ paths:
               properties:
                 address: { type: string }
                 network: { type: string }
-                depth: { type: integer, default: 1, maximum: 2 }
       responses:
         '200':
-          description: Expanded subgraph
+          description: |
+            Expanded subgraph. `nodes` and `edges` are aggregated per
+            counterparty (one edge per `(target, counterparty)` pair).
+
+            `partial`/`fetchedTxs`/`totalTxs` appear when the upstream
+            transaction fetch hit its per-network cap — the response
+            still contains the top counterparties by aggregate value,
+            just not derived from the full history.
           content:
             application/json:
               schema:
                 type: object
+                required: [nodes, edges]
                 properties:
-                  nodes: { type: array, items: { type: object } }
-                  edges: { type: array, items: { type: object } }
-                  creditsRemaining: { type: integer }
+                  nodes:
+                    type: array
+                    items: { $ref: '#/components/schemas/GraphNode' }
+                  edges:
+                    type: array
+                    items: { $ref: '#/components/schemas/GraphEdge' }
+                  partial:
+                    type: boolean
+                    description: |
+                      True when upstream tx fetch hit a per-network cap.
+                      Absent when the full history was scanned.
+                  fetchedTxs:
+                    type: integer
+                    description: Transactions actually fetched from the upstream provider. Present only when `partial = true`.
+                  totalTxs:
+                    type: integer
+                    description: Reported total transaction count for the address (best-effort, may be 0 if unknown). Present only when `partial = true`.
 
   /api/graph/csv-import:
     post:
@@ -1689,6 +1933,56 @@ paths:
         '200':
           description: Paginated tickets
 
+# ── Outbound webhook callbacks ──────────────────────────────────────────────
+# OpenAPI 3.1 top-level `webhooks:` describes callbacks OnChainRisk sends
+# OUT to customer-configured endpoints (registered via PATCH
+# /api/notifications/settings). See docs/integration/webhooks.md for HMAC
+# verification and delivery semantics (single-attempt today, ~5-min cadence).
+webhooks:
+  watchlistAlert:
+    post:
+      operationId: watchlistAlertWebhook
+      # Outbound webhook — auth is HMAC SHA-256 (X-Signature-256), not the
+      # apiKeyAuth scheme used by inbound endpoints. Empty list explicitly
+      # opts out of root-level apiKeyAuth so codegen / lint don't expect it.
+      security: []
+      summary: Watchlist alert (outbound webhook)
+      description: |
+        Delivered to your configured `webhook_url` when a watchlist item
+        sees a new on-chain transaction. Cron cadence ~5 minutes.
+
+        **HMAC**: when `webhook_secret` is set, the `X-Signature-256` header
+        contains `sha256=<hex>` over the raw request body bytes. Verify
+        before processing — see docs/integration/webhooks.md for sample
+        Node and Python verifiers.
+
+        **Delivery semantics**: single attempt per alert today. If your
+        endpoint is briefly unavailable the alert is logged on our side
+        and not retried. Retries are roadmap.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WatchlistAlertWebhookPayload'
+      parameters:
+        - in: header
+          name: X-Signature-256
+          required: false
+          description: |
+            HMAC SHA-256 of the raw request body, hex-encoded, prefixed
+            with `sha256=`. Present only when `webhook_secret` was set
+            via PATCH /api/notifications/settings. Strongly recommended
+            to configure.
+          schema:
+            type: string
+            example: "sha256=<hex_hmac_sha256_signature>"
+      responses:
+        '2xx':
+          description: |
+            Any 2xx response acknowledges receipt. We do not retry on
+            non-2xx today (single-attempt delivery).
+
 components:
   securitySchemes:
     apiKeyAuth:
@@ -1743,6 +2037,17 @@ components:
                     address: "Unsupported network 'ethereum'. Supported: arbitrum, avalanche, base, bsc, btc, cardano, celo, cosmos, cronos, eth, fantom, linea, ltc, moonbeam, optimism, polygon, polygon_zkevm, scroll, sol, ton, tron, xrp, zksync."
                     errorCode: "UNSUPPORTED_NETWORK"
                     requestedNetwork: "ethereum"
+            deep-analysis-unsupported-network:
+              summary: Deep analysis (peel chain) not available for this network
+              value:
+                success: false
+                error:
+                  message: "Validation failed"
+                  code: "VALIDATION_ERROR"
+                  details:
+                    network: "Deep analysis not yet supported for TRON. Supported: ETH, Arbitrum, Optimism, Base, Polygon, Avalanche, Linea, zkSync Era, Scroll."
+                    errorCode: "DEEP_ANALYSIS_UNSUPPORTED_NETWORK"
+                    requestedNetwork: "tron"
             could-not-detect-network:
               summary: Unrecognisable address, no network hint
               value:
@@ -1767,11 +2072,268 @@ components:
                     requestedNetwork: "tron"
 
   schemas:
+    Coverage:
+      type: object
+      description: |
+        Per-chain coverage disclosure block. Present on every report response
+        regardless of stage — clients should NEVER need to special-case its absence.
+
+        Stage taxonomy:
+          - `ga`       — General Availability: full historical depth within stated window.
+          - `rollout`  — Active migration / soak window. Coverage windows may temporarily vary.
+          - `preview`  — Pre-v1: reports may have incomplete depth or gaps.
+          - `degraded` — Known operational incident; see `warning` and `incident_url`.
+
+        **Client integration requirement:** clients integrating OnChainRisk are
+        REQUIRED to surface the `coverage.disclosure` field to end users when
+        `stage != ga`. For `stage in [preview, degraded]`, clients MUST surface
+        the `warning` field prominently.
+
+        Canonical per-chain status matrix: see the `matrix_url` link.
+      required: [stage, window, data_path, as_of, disclosure, matrix_url]
+      properties:
+        stage:
+          type: string
+          enum: [ga, rollout, preview, degraded]
+          description: |
+            Coverage maturity for this chain.
+        window:
+          type: [string, 'null']
+          example: "30d"
+          description: |
+            Trailing coverage window (e.g. "30d", "90d"). May be `null` for
+            chains in `preview` stage where no window is yet committed.
+        data_path:
+          type: string
+          example: "self_hosted_nitro_clickhouse"
+          description: |
+            Production data path label (informational; not a user-facing
+            commitment). Subject to change without notice within the stated stage.
+        as_of:
+          type: string
+          format: date
+          example: "2026-05-04"
+          description: ISO date when this coverage status was last verified.
+        disclosure:
+          type: string
+          description: |
+            Disclosure text appropriate for this stage. Clients SHOULD surface
+            this to end users when `stage != ga`. For `ga` chains, this is the
+            standard methodology footer reference.
+        warning:
+          type: string
+          description: |
+            Strong warning text. Present (REQUIRED) when `stage in [preview, degraded]`.
+            Clients MUST surface this prominently. Absent for `stage in [ga, rollout]`.
+        incident_url:
+          type: string
+          format: uri
+          description: |
+            Incident status URL. May be present when `stage = degraded`.
+        matrix_url:
+          type: string
+          format: uri
+          example: "https://onchainrisk.io/coverage"
+          description: |
+            Public canonical coverage matrix page. UI pills and clients
+            integrating OnChainRisk should link here for current per-chain status.
+      example:
+        stage: rollout
+        window: "30d"
+        data_path: self_hosted_nitro_clickhouse
+        as_of: "2026-05-04"
+        disclosure: "OnChainRisk's multi-chain coverage is in active rollout..."
+        matrix_url: https://onchainrisk.io/coverage
+
+    GraphNode:
+      type: object
+      description: |
+        Counterparty node in the paid graph response. One node per
+        unique counterparty address aggregated from the target's
+        transaction history.
+      required: [address, txCount]
+      properties:
+        address:
+          type: string
+          description: Counterparty address (case preserved per network — hex addresses returned in lowercase).
+        label:
+          type: [string, 'null']
+          description: |
+            Human-readable label from the OnChainRisk label database
+            (exchange names, mixer/bridge tags, custom user labels, etc.)
+            or `null` when no label matches.
+        isTarget:
+          type: boolean
+          description: |
+            Always `false` for counterparty nodes returned by this
+            endpoint. Reserved for graph-rendering clients that may
+            also represent the queried address as a node — the API
+            does not currently emit a target node, but client code
+            should treat unknown values defensively.
+        totalValue:
+          type: string
+          description: |
+            Aggregate native value across all transactions with this
+            counterparty, formatted with the network's native unit
+            (e.g. `"1.5 ETH"`, `"42 BNB"`, `"100 TRX"`). String to
+            preserve precision across networks.
+        txCount:
+          type: integer
+          minimum: 0
+          description: Total transactions between target and this counterparty in the fetched history.
+        tokens:
+          type: array
+          description: |
+            Token symbols flowing through this counterparty (capped at
+            the top-N by volume per the analyzer). May be empty when
+            no token transfers were observed or the network has no
+            token analyzer wired.
+          items:
+            type: string
+
+    GraphEdge:
+      type: object
+      description: |
+        Aggregated edge between target and one counterparty. Each
+        `(target, counterparty)` pair produces exactly one edge —
+        all transactions in the same direction-dominant flow are
+        summed. Direction is inferred: edge points from the side
+        that contributed more native value.
+      required: [from, to, value, valueWei, txCount]
+      properties:
+        from:
+          type: string
+          description: Source address (target or counterparty depending on net flow direction).
+        to:
+          type: string
+          description: Destination address.
+        fromLabel:
+          type: [string, 'null']
+          description: Label of the `from` address (counterparty label when the counterparty was the sender; otherwise `null`).
+        toLabel:
+          type: [string, 'null']
+          description: Label of the `to` address (counterparty label when the counterparty was the recipient; otherwise `null`).
+        value:
+          type: string
+          description: Native value formatted with unit (e.g. `"1.5 ETH"`).
+        valueWei:
+          type: string
+          description: |
+            Native value in raw integer units (wei for EVM, sun for
+            Tron, satoshi for BTC/LTC, lamports for SOL, etc.). String
+            to preserve precision beyond JS Number range.
+        txCount:
+          type: integer
+          minimum: 1
+          description: Number of transactions aggregated into this edge.
+        firstTx:
+          type: integer
+          description: |
+            Unix timestamp (seconds) of the earliest transaction
+            aggregated into this edge. May be `0` when the upstream
+            analyzer was unable to determine — treat `0` as "unknown",
+            not "epoch zero".
+        lastTx:
+          type: integer
+          description: |
+            Unix timestamp (seconds) of the latest transaction
+            aggregated into this edge. Same `0`-as-unknown caveat as
+            `firstTx`.
+        tokenBreakdown:
+          type: array
+          description: |
+            Per-token volume context for transactions on this edge.
+            Common fields per item include `symbol` (string), `value`
+            (string, formatted), and `txCount` (integer); additional
+            per-network fields may be present. **Treat the item shape
+            as open** — clients should defensively handle unknown
+            properties and not assume a closed schema.
+          items:
+            type: object
+
+    WatchlistAlertWebhookPayload:
+      type: object
+      description: |
+        Body sent to a customer-configured webhook URL when a watchlist
+        item sees a new transaction. Stable top-level fields are listed
+        below; nested `data.*` fields evolve and clients should parse
+        defensively (do not assume the shape is closed).
+      required:
+        - type
+        - alert_id
+        - address
+        - network
+      properties:
+        type:
+          type: string
+          enum: [watchlist_alert]
+          description: Webhook event type. Currently only `watchlist_alert`.
+        alert_id:
+          type: integer
+          description: Stable per-alert ID; usable as idempotency key.
+        watchlist_id:
+          type: integer
+          description: ID of the watchlist item that fired this alert.
+        address:
+          type: string
+          description: The watched address.
+        network:
+          type: string
+          description: Network identifier (e.g. `eth`, `bsc`, `tron`).
+        alert_type:
+          type: [string, 'null']
+          description: |
+            High-level alert category. Examples seen in production:
+            `incoming`, `outgoing`, `balance_change`. Treat as
+            open-ended — new types may be added without spec bump.
+        tx_hash:
+          type: [string, 'null']
+          description: Transaction hash (when applicable).
+        explorer_url:
+          type: [string, 'null']
+          format: uri
+          description: Pre-built explorer link for the transaction.
+        value:
+          type: [string, 'null']
+          description: Native value, formatted as a string for precision.
+        timestamp:
+          type: [integer, 'null']
+          description: Unix seconds when the alert was emitted.
+        data:
+          type: object
+          description: |
+            Nested context object — fields evolve. Currently includes
+            denormalized copies of `tx_hash`, `explorer_url`, `network`,
+            `address`, plus a `tx` sub-object for transaction details
+            and `alertType`. Parse defensively.
+      example:
+        type: watchlist_alert
+        alert_id: 12345
+        watchlist_id: 678
+        address: "0xYourAddress"
+        network: eth
+        alert_type: incoming
+        tx_hash: "0xabc123..."
+        explorer_url: "https://etherscan.io/tx/0xabc123..."
+        value: "1.234"
+        timestamp: 1777800000
+        data:
+          address: "0xYourAddress"
+          network: eth
+          alertType: incoming
+          tx:
+            hash: "0xabc123..."
+            value: "1.234"
+            from: "0xSender..."
+            to: "0xYourAddress"
+          tx_hash: "0xabc123..."
+          explorer_url: "https://etherscan.io/tx/0xabc123..."
+
     ErrorResponse:
       type: object
       description: |
         Stable error envelope for validation and business-rule failures.
-        The shape mirrors the live Worker response:
+        The shape mirrors the live API response:
 
         ```json
         { "success": false, "error": ErrorResponse }
@@ -1795,7 +2357,7 @@ components:
           type: object
           description: |
             Granular context. For validation failures the shape below is stable;
-            for other error classes the Worker may return different keys.
+            for other error classes the API may return different keys.
           properties:
             address:
               type: string
@@ -1834,6 +2396,40 @@ components:
         network: { type: string }
         riskScore: { type: integer, minimum: 0, maximum: 100, nullable: true, description: "Null while async scan is queued/analyzing." }
         riskLevel: { type: string, enum: [critical, high, medium, low], nullable: true }
+        riskContributions:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: integer
+            minimum: 0
+            maximum: 100
+          description: |
+            Per-component risk contribution scores, 0-100. Keys are the
+            seven scorer components (mixer_interaction, sanctioned_contact,
+            behavioral_patterns, counterparty_risk, timing_anomalies,
+            contract_risk, fund_flow_topology). Null on pre-explainability
+            Modal versions. Honest invariant:
+              base_score ≈ round(Σ riskContributions[k] × riskWeights[k])
+            The final `riskScore` may still be higher than base_score
+            because critical override floors (sanctioned, exploit, frozen,
+            mixer, transit_massive, ...) are applied separately. Surfacing
+            which floor fired is planned for a future PR.
+        riskWeights:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: number
+            minimum: 0
+            maximum: 1
+          description: |
+            Effective per-component weights actually used for THIS scoring
+            run, after custom_weights validation/normalization and EOA
+            redistribution (contract_risk → 0, redistributed across
+            mixer/sanctioned/behavioral). NOT the static module-default
+            weights. Sum of values is 1.0 (within float tolerance).
+            Keys are the same seven components as `riskContributions` so
+            the two maps can be zipped client-side. Null on pre-
+            explainability Modal versions.
         reportId: { type: string, format: uuid }
         status:
           $ref: '#/components/schemas/ReportStatus'

@@ -84,7 +84,7 @@ info:
 
     ## Validation errors
 
-    Address validation runs before any blockchain scan. On failure the Worker
+    Address validation runs before any blockchain scan. On failure the API
     returns **HTTP 422** with this envelope:
 
     ```json
@@ -209,11 +209,17 @@ paths:
 
         ### Supported networks
         EVM family — `eth`, `arbitrum`, `optimism`, `base`, `polygon`,
-        `avalanche`, `linea`, `zksync`, `scroll`, `celo`, `cronos`,
-        `fantom`, `moonbeam`, `polygon_zkevm`, plus `bsc` and `tron`.
-        Other networks (sol, btc, ltc, ton, cosmos, cardano, xrp) return
-        **422** with `details.errorCode = "NETWORK_NOT_SUPPORTED_IN_SANDBOX"`
-        — no silent fallback to a paid traversal.
+        `avalanche`, `zksync`, `scroll`, `celo`, `cronos`, `moonbeam`,
+        plus `bsc` and `tron`. **13 networks total** in current
+        production. Other networks (sol, btc, ltc, ton, cosmos, cardano,
+        xrp, plus `linea`, `fantom`, `polygon_zkevm`) return **422**
+        with `details.errorCode = "NETWORK_NOT_SUPPORTED_IN_SANDBOX"` —
+        no silent fallback to a paid traversal.
+
+        > `linea`, `fantom`, `polygon_zkevm` were removed from the
+        > supported set in audit #46 (2026-05-04) because the upstream
+        > analyzer returns 503 for these chains. They will return when
+        > the underlying provider config is fixed.
 
         ### Auth
         API key only (sandbox `ocr_test_*` or paid `ocr_live_*`). JWT/session
@@ -240,14 +246,11 @@ paths:
                     - base
                     - polygon
                     - avalanche
-                    - linea
                     - zksync
                     - scroll
                     - celo
                     - cronos
-                    - fantom
                     - moonbeam
-                    - polygon_zkevm
                     - bsc
                     - tron
                   example: "eth"
@@ -284,8 +287,8 @@ paths:
                   code: { type: string, example: "SANDBOX_GRAPH_UNAVAILABLE" }
 
   # Note: /api/analyze/estimate is NOT exposed on api.onchainrisk.io. It is an
-  # internal Modal preflight called by the Worker handler; direct external
-  # calls would 404. Intentionally omitted from this spec.
+  # internal preflight; direct external calls would 404. Intentionally
+  # omitted from this spec.
 
   /api/user/me:
     get:
@@ -420,11 +423,85 @@ components:
               upgrade_url: { type: string }
 
   schemas:
+    Coverage:
+      type: object
+      description: |
+        Per-chain coverage disclosure block. Present on every report response
+        regardless of stage — clients should NEVER need to special-case its absence.
+
+        Stage taxonomy:
+          - `ga`       — General Availability: full historical depth within stated window.
+          - `rollout`  — Active migration / soak window. Coverage windows may temporarily vary.
+          - `preview`  — Pre-v1: reports may have incomplete depth or gaps.
+          - `degraded` — Known operational incident; see `warning` and `incident_url`.
+
+        **Client integration requirement:** clients integrating OnChainRisk are
+        REQUIRED to surface the `coverage.disclosure` field to end users when
+        `stage != ga`. For `stage in [preview, degraded]`, clients MUST surface
+        the `warning` field prominently.
+
+        Sandbox responses use the SAME Coverage schema as paid responses — no
+        schema drift between the two surfaces. Sandbox does not carry a
+        sandbox-specific stage; the stage reflects the underlying chain's
+        canonical maturity from the public coverage matrix.
+
+        Canonical per-chain status matrix: see the `matrix_url` link.
+      required: [stage, window, data_path, as_of, disclosure, matrix_url]
+      properties:
+        stage:
+          type: string
+          enum: [ga, rollout, preview, degraded]
+          description: |
+            Coverage maturity for this chain.
+        window:
+          type: [string, 'null']
+          example: "30d"
+          description: |
+            Trailing coverage window (e.g. "30d", "90d"). May be `null` for
+            chains in `preview` stage where no window is yet committed.
+        data_path:
+          type: string
+          example: "self_hosted_nitro_clickhouse"
+          description: |
+            Production data path label (informational; not a user-facing
+            commitment).
+        as_of:
+          type: string
+          format: date
+          example: "2026-05-04"
+          description: ISO date when this coverage status was last verified.
+        disclosure:
+          type: string
+          description: |
+            Disclosure text appropriate for this stage. Clients SHOULD surface
+            this to end users when `stage != ga`.
+        warning:
+          type: string
+          description: |
+            Strong warning text. Present (REQUIRED) when `stage in [preview, degraded]`.
+            Clients MUST surface this prominently.
+        incident_url:
+          type: string
+          format: uri
+          description: |
+            Incident status URL. May be present when `stage = degraded`.
+        matrix_url:
+          type: string
+          format: uri
+          example: "https://onchainrisk.io/coverage"
+      example:
+        stage: rollout
+        window: "30d"
+        data_path: self_hosted_nitro_clickhouse
+        as_of: "2026-05-04"
+        disclosure: "OnChainRisk's multi-chain coverage is in active rollout..."
+        matrix_url: https://onchainrisk.io/coverage
+
     ErrorResponse:
       type: object
       description: |
         Stable error envelope for validation and business-rule failures.
-        The shape mirrors the live Worker response:
+        The shape mirrors the live API response:
 
         ```json
         { "success": false, "error": ErrorResponse }
@@ -448,7 +525,7 @@ components:
           type: object
           description: |
             Granular context. For validation failures the shape below is stable;
-            for other error classes the Worker may return different keys.
+            for other error classes the API may return different keys.
           properties:
             address:
               type: string
@@ -819,8 +896,8 @@ components:
               type: boolean
               description: |
                 True when at least one of: tx fetch hit the cap, nodes
-                were truncated, edges were truncated, or Modal flagged
-                the response as partial.
+                were truncated, edges were truncated, or the upstream
+                analysis service flagged the response as partial.
             _sandbox:
               $ref: '#/components/schemas/SandboxGraphMarker'
 
