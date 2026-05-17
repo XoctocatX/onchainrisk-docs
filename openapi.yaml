@@ -2430,6 +2430,68 @@ components:
             Keys are the same seven components as `riskContributions` so
             the two maps can be zipped client-side. Null on pre-
             explainability Modal versions.
+        riskConfidence:
+          type: string
+          enum: [high, medium, low]
+          description: |
+            Confidence in the reported `riskScore` based on data
+            completeness. **Behavior change**: this enum was previously
+            `[high, low]` and now includes `medium`. Tier semantics:
+              - `high`: fully complete tx fetch, exact funded_by, no
+                token-flow extraction crash, no coverage downgrade.
+              - `medium`: partial-but-substantial data
+                (`completeness_pct ≥ 60`), or any tx-count coverage
+                downgrade (approximate / subset_only / unknown), or
+                `token_flow_incomplete`, or `funded_by_status` in
+                {approximate, unavailable}.
+              - `low`: `riskScore` was nulled due to low completeness,
+                or provider returned `api_error`, or partial-fetch with
+                `completeness_pct < 60` (or unknown).
+            See `riskConfidenceDetails` for the specific reasons that
+            drove the tier on this particular response.
+        riskConfidenceDetails:
+          type: object
+          nullable: true
+          description: |
+            Structured explanation of why a particular `riskConfidence`
+            tier was selected. Null on pre-explainability Modal versions
+            (in that case `riskConfidence` is still emitted with a tier
+            value, just without the breakdown).
+          properties:
+            tier:
+              type: string
+              enum: [high, medium, low]
+              description: Same value as `riskConfidence`.
+            completeness_pct:
+              type: number
+              nullable: true
+              minimum: 0
+              maximum: 100
+              description: |
+                Fraction of reported transaction history actually
+                fetched. Null when the upstream provider doesn't expose
+                a reliable total (some non-EVM chains).
+            reasons:
+              type: array
+              items:
+                type: string
+                enum:
+                  - tx_count_coverage_subset
+                  - tx_count_coverage_approximate
+                  - tx_count_coverage_unknown
+                  - tx_fetch_incomplete_limit_cap
+                  - tx_fetch_incomplete_api_error
+                  - token_flow_incomplete
+                  - funded_by_approximate
+                  - funded_by_unavailable
+                  - score_unavailable_low_completeness
+              description: |
+                Public-contract identifiers for each completeness signal
+                that contributed to the tier. Order is deterministic
+                (alphabetical) and the list is deduplicated. Empty when
+                tier is `high`. A `low` tier may include medium-level
+                reasons too — clients should render the full list rather
+                than only the most-severe entry.
         reportId: { type: string, format: uuid }
         status:
           $ref: '#/components/schemas/ReportStatus'
