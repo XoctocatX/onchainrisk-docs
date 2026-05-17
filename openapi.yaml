@@ -32,6 +32,7 @@ info:
     - `POST /api/v1/token/check` — 1 credit (charged on save, not preview)
     - `POST /api/v1/block/analyze` — 1 credit (auto-saves report)
     - `POST /api/v1/multichain/scan` — **5 credits** (auto-saves report)
+    - `POST /api/v1/multichain/analyze` — **5 credits** (background full analysis; charged separately from `/scan`)
 
     Client-side idempotency is not currently supported. Repeated or
     concurrent successful requests may be billed separately. Avoid automatic
