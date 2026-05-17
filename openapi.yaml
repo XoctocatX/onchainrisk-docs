@@ -2430,6 +2430,30 @@ components:
             Keys are the same seven components as `riskContributions` so
             the two maps can be zipped client-side. Null on pre-
             explainability Modal versions.
+        riskReasons:
+          type: array
+          description: |
+            Ranked, typed reasons explaining the `riskScore`. Each entry
+            is either a `floor` (an override floor that was applied) or
+            a `component` (a non-zero per-component contribution to the
+            base score).
+
+            Sort order is deterministic and stable across runs:
+              1. `impactScore` descending,
+              2. `kind` ascending (`floor` before `component`),
+              3. `code` ascending alphabetical.
+
+            Empty array when `riskScore` is `null` (insufficient data)
+            or when no signal exceeded the minimum-impact threshold.
+            Older servers may omit the field entirely — clients should
+            default to `[]` if absent.
+
+            Floor reasons carry the matching flag subset in
+            `supportingFlags`. Component reasons emit `supportingFlags: []`
+            in this PR; per-component flag attribution is planned for a
+            later PR.
+          items:
+            $ref: '#/components/schemas/RiskReason'
         riskConfidence:
           type: string
           enum: [high, medium, low]
@@ -2807,6 +2831,114 @@ components:
         - fiat_ramp
         - payment_processor
         - unknown
+
+    RiskReason:
+      type: object
+      required:
+        - code
+        - kind
+        - severity
+        - title
+        - templateKey
+        - description
+        - impactScore
+        - supportingFlags
+      description: |
+        One ranked, typed reason contributing to the final `riskScore`.
+        See the `riskReasons` field on `AnalysisResult` for ordering
+        semantics. The `code` enum is locked as part of the public
+        contract — additions require explicit review.
+      properties:
+        code:
+          type: string
+          description: |
+            Stable machine-readable identifier. Locked enum.
+
+            **Floor codes** (prefix `floor_`) — an override-floor that
+            was applied to `riskScore` because a high-severity signal
+            fired. Each floor reason carries the matching flag subset
+            in `supportingFlags`.
+
+            **Component codes** — the seven scorer components (same
+            keys as `riskContributions` / `riskWeights`). Each
+            component reason represents a non-zero contribution to the
+            base score. Component reasons emit `supportingFlags: []`
+            in this version.
+          enum:
+            - floor_sanctioned
+            - floor_exploit
+            - floor_scam
+            - floor_phishing
+            - floor_frozen
+            - floor_mixer
+            - floor_perm_hijack
+            - floor_transit
+            - floor_transit_massive
+            - floor_railgun
+            - floor_railgun_low_anon
+            - floor_campaign
+            - floor_campaign_heavy
+            - floor_flag_density
+            - floor_honeypot
+            - floor_excessive_tax
+            - floor_low_token_score
+            - mixer_interaction
+            - sanctioned_contact
+            - behavioral_patterns
+            - counterparty_risk
+            - timing_anomalies
+            - contract_risk
+            - fund_flow_topology
+        kind:
+          type: string
+          enum: [floor, component]
+          description: |
+            `floor` — an override-floor was applied (the score is
+            forced to at least `impactScore`).
+
+            `component` — a non-zero per-component contribution to the
+            base score with magnitude `impactScore`.
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+          description: |
+            Bucket for the reason's significance. `critical` is reserved
+            for sanctioned / exploit / scam floor reasons; component
+            reasons never surface as `critical`.
+        title:
+          type: string
+          description: Short human-readable English label.
+          example: "Sanctioned address — score floor applied"
+        templateKey:
+          type: string
+          description: |
+            Namespaced i18n key. `reason.floor.<code-suffix>` for floor
+            reasons, `reason.component.<code>` for component reasons.
+          example: reason.floor.sanctioned
+        description:
+          type: string
+          description: |
+            Short stable English explanation. May include dynamic
+            integers (e.g. the floor minimum that was applied). Do not
+            use as a translation key.
+          example: "Address is on a sanctions / OFAC list. The risk score is forced to at least 95."
+        impactScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: |
+            Floors: the minimum score the floor enforced (e.g. 95 for
+            sanctioned). Components: `round(riskContributions[code] *
+            riskWeights[code])`, i.e. the honest contribution to the
+            base score before any floor. Always used as the primary
+            ranking key (DESC).
+        supportingFlags:
+          type: array
+          items: { type: string }
+          description: |
+            For floor reasons, the subset of `flags` (verbatim rendered
+            strings) that matched the floor's predicate. For component
+            reasons in this version, always an empty array.
 
     FlagDetail:
       type: object

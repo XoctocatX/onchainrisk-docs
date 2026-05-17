@@ -7,6 +7,59 @@ response shapes, status codes, error codes, and supported networks.
 Internal implementation, infrastructure, and tooling changes are not
 listed here.
 
+## 2026-05-17 - Ranked `riskReasons` for `/api/v1/check`
+
+The `POST /api/v1/check` response now includes a `riskReasons` array
+that explains how the `riskScore` was reached. Each entry is either a
+score-floor reason or a per-component reason, ranked by impact.
+
+### Added response field
+
+- `riskReasons`: array of structured reasons. Empty when `riskScore`
+  is `null` or no signal exceeded the minimum impact threshold.
+
+Each entry has:
+- `code`: stable machine-readable identifier from a locked enum.
+- `kind`: `floor` (an override floor was applied) or `component`
+  (a non-zero per-component contribution to the base score).
+- `severity`: `critical`, `high`, `medium`, or `low`. `critical` is
+  reserved for sanctioned, exploit, and scam floor reasons.
+- `title`: short English label for display.
+- `templateKey`: namespaced i18n key (`reason.floor.<code-suffix>` or
+  `reason.component.<code>`).
+- `description`: short stable English explanation, may include
+  integers (e.g. the floor minimum that was applied).
+- `impactScore`: integer 0-100. For floors, the minimum the floor
+  enforced. For components, the honest contribution to the base
+  score before any floor.
+- `supportingFlags`: for floor reasons, the matching subset of
+  `flags`. For component reasons in this version, always an empty
+  array.
+
+### Order
+
+`riskReasons` is sorted deterministically:
+1. `impactScore` descending,
+2. `kind` ascending (`floor` before `component`),
+3. `code` ascending alphabetical.
+
+### Compatibility
+
+- `riskScore`, `riskLevel`, `riskContributions`, `riskWeights`,
+  `riskConfidence`, `riskConfidenceDetails`, `flags`, `patternFlags`,
+  and `patternFlagDetails` behavior did not change.
+- Clients that ignore `riskReasons` see no change.
+- Older servers may omit the field entirely - clients should default
+  to `[]` when absent.
+
+### Notes
+
+`riskReasons` is the bridge between `riskScore` (final value, may be
+boosted by an override floor) and `riskContributions` /
+`riskWeights` (per-component pre-floor breakdown). When a floor
+reason appears in `riskReasons`, it explains the gap between the
+weighted-sum of contributions and the final score.
+
 ## 2026-05-16 - 3-tier `riskConfidence` for `/api/v1/check`
 
 The `riskConfidence` field on the `POST /api/v1/check` response has
