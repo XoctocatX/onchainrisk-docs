@@ -29,7 +29,7 @@ info:
     Cost per request:
     - `POST /api/v1/check` — 1 credit
     - `POST /api/v1/check/deep` — 1 credit
-    - `POST /api/v1/token/check` — 1 credit (charged on save, not preview)
+    - `POST /api/v1/token/check` — 1 credit (charged on save via `POST /api/v1/token/reports` when `honeypot.status === "ok"`; non-ok statuses are not charged)
     - `POST /api/v1/block/analyze` — 1 credit (auto-saves report)
     - `POST /api/v1/multichain/scan` — **5 credits** (auto-saves report)
     - `POST /api/v1/multichain/analyze` — **5 credits** (background full analysis; charged separately from `/scan`)
@@ -2648,7 +2648,10 @@ components:
           $ref: '#/components/schemas/ContractInfo'
         dataCompleteness:
           $ref: '#/components/schemas/DataCompleteness'
-        honeypot: { type: object, nullable: true }
+        honeypot:
+          oneOf:
+            - $ref: '#/components/schemas/Honeypot'
+            - type: 'null'
         railgun: { type: object, nullable: true }
         clusters: { type: object, nullable: true }
         usdPrices: { type: object, nullable: true }
@@ -2940,6 +2943,72 @@ components:
             For floor reasons, the subset of `flags` (verbatim rendered
             strings) that matched the floor's predicate. For component
             reasons in this version, always an empty array.
+
+    Honeypot:
+      type: object
+      required: [status]
+      description: |
+        Honeypot verification result on `POST /api/v1/token/check` (and
+        the streaming variant). The `status` field indicates whether the
+        verification was actionable. **Read `status` BEFORE relying on
+        any measurable field.**
+
+        `isHoneypot` is `null` for all non-ok statuses. Treating
+        `isHoneypot === null` as `false` ("not a honeypot") is incorrect;
+        null means "unknown".
+
+        Saving a non-ok result via `POST /api/v1/token/reports` is **not
+        charged** — see the cost summary at the top of this spec and the
+        CHANGELOG entry for `honeypot.status`.
+
+        Reason codes (when `status != "ok"`):
+        - `provider_rate_limited` — upstream provider rate-limited the
+          honeypot detector.
+        - `provider_error` — upstream provider error (network, timeout,
+          5xx, etc.).
+        - `analyzer_error` — internal analyzer exception.
+        - `network_not_supported` — detector is unavailable for this
+          network/setup.
+        - `no_data` — no on-chain DEX pair found or token contract
+          inconclusive.
+      properties:
+        status:
+          type: string
+          enum: [ok, unable_to_verify, not_supported, no_data]
+        reason:
+          type: string
+          nullable: true
+          enum:
+            - provider_rate_limited
+            - provider_error
+            - analyzer_error
+            - network_not_supported
+            - no_data
+        isHoneypot:
+          type: boolean
+          nullable: true
+          description: |
+            True/false ONLY when `status="ok"`. Null for all non-ok statuses.
+            Null means "unknown" — NOT "not a honeypot".
+        buyTax: { type: number, nullable: true }
+        sellTax: { type: number, nullable: true }
+        buySuccess: { type: boolean, nullable: true }
+        sellSuccess: { type: boolean, nullable: true }
+        transferPausable: { type: boolean, nullable: true }
+        hasBlacklist: { type: boolean, nullable: true }
+        hasMaxTx: { type: boolean, nullable: true }
+        hasCooldown: { type: boolean, nullable: true }
+        liquidityLocked: { type: boolean, nullable: true }
+        liquidityAmount: { type: number, nullable: true }
+        pairAddress: { type: string, nullable: true }
+        dexName: { type: string, nullable: true }
+        flags:
+          type: array
+          items: { type: string }
+          nullable: true
+        riskLevel:
+          type: string
+          nullable: true
 
     FlagDetail:
       type: object

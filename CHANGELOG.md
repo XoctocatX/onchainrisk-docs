@@ -7,6 +7,77 @@ response shapes, status codes, error codes, and supported networks.
 Internal implementation, infrastructure, and tooling changes are not
 listed here.
 
+## 2026-05-18 - Explicit `honeypot.status` enum on `/api/v1/token/check`
+
+The `honeypot` field returned by `POST /api/v1/token/check` (and the
+streaming variant `/api/v1/token/check/stream`) now carries an explicit
+verification status. Save-time billing on `POST /api/v1/token/reports`
+is gated on this status.
+
+### New `honeypot.status` enum
+
+- `ok` — verification succeeded; all 15 measurable fields populated.
+- `unable_to_verify` — provider or analyzer error during the run.
+- `not_supported` — honeypot detection is not available for this
+  network/setup.
+- `no_data` — no on-chain DEX pair found, or the contract is
+  inconclusive.
+
+### New `honeypot.reason` enum (only when status != "ok")
+
+- `provider_rate_limited`
+- `provider_error`
+- `analyzer_error`
+- `network_not_supported`
+- `no_data`
+
+### IMPORTANT — `isHoneypot === null` means UNKNOWN
+
+For all non-ok statuses, `isHoneypot` is `null` (and so are the 14
+other measurable fields). **Treat `isHoneypot === null` as
+"unknown" — NOT as "not a honeypot".** Older client code that does:
+
+```js
+if (data.honeypot.isHoneypot) { /* danger */ }
+else                          { /* safe */ }   // ← WRONG for null
+```
+
+must be updated to check status first:
+
+```js
+if (data.honeypot.status !== "ok") { /* unknown — handle separately */ }
+else if (data.honeypot.isHoneypot) { /* danger */ }
+else                               { /* safe */ }
+```
+
+### Billing change
+
+Saving a token report (`POST /api/v1/token/reports`) is now charged
+only when `honeypot.status === "ok"`. Non-ok statuses return a 200
+response with `charged: false` and a structured echo of
+`honeypot.{status, reason}`; no quota or credit is consumed and no
+report row is created.
+
+The response now always carries a `charged: true|false` field on
+every save path (ok, duplicate-of-existing-save, non-ok).
+
+### Legacy shape compatibility
+
+Clients that send the pre-2026-05-18 honeypot shape (no `status`
+field, `isHoneypot` as a boolean) continue to be saved and charged
+under a `legacy_ok` classifier branch. **This compatibility branch
+will be removed after 2026-06-17.** Update clients to read
+`honeypot.status` before then.
+
+### Out of scope for this release
+
+- Dashboard rendering of the 4 status states ships separately in a
+  follow-up release (next few days). Until then the dashboard may
+  show a generic message on non-ok statuses.
+- The `tron` and `scroll` networks remain outside the
+  `/api/v1/token/check` supported set. Tron re-enablement is gated
+  on the next release after the dashboard renderer ships.
+
 ## 2026-05-17 - Ranked `riskReasons` for `/api/v1/check`
 
 The `POST /api/v1/check` response now includes a `riskReasons` array
