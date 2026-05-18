@@ -2869,6 +2869,7 @@ components:
         - description
         - impactScore
         - supportingFlags
+        - evidence
       description: |
         One ranked, typed reason contributing to the final `riskScore`.
         See the `riskReasons` field on `AnalysisResult` for ordering
@@ -2965,6 +2966,183 @@ components:
             For floor reasons, the subset of `flags` (verbatim rendered
             strings) that matched the floor's predicate. For component
             reasons in this version, always an empty array.
+        evidence:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskEvidence'
+          description: |
+            Task #63 PR 4 — structured observations supporting this
+            reason. Always an array; never null. Phase 1 populates
+            evidence rows for **floor-level reasons only**; component
+            reasons (`mixer_interaction`, `sanctioned_contact`,
+            `behavioral_patterns`, `counterparty_risk`,
+            `timing_anomalies`, `contract_risk`, `fund_flow_topology`)
+            return `evidence: []` in this version — that surface is
+            planned for a follow-up PR.
+
+            New evidence `kind` values may be added in future versions
+            on a strictly additive basis; clients SHOULD treat the
+            `kind` enum as forward-compatible (an unknown value MUST
+            NOT crash a client).
+
+            Worker-side normalization: a pre-PR-4 Modal that omits
+            this field on a reason has its reason coerced to
+            `evidence: []` at the Worker boundary so the "always an
+            array" contract holds regardless of which side deployed
+            first.
+
+    RiskEvidence:
+      type: object
+      required:
+        - kind
+        - observedAt
+      description: |
+        One structured observation supporting a `RiskReason`. Shape is
+        a flat tagged-union: every row has `kind` + `observedAt` plus
+        kind-specific optional fields. Clients dispatch on `kind` and
+        read only the fields documented for that kind.
+
+        **`observedAt` is the scorer-run timestamp** — the moment the
+        analysis was performed by the engine that produced THIS
+        response. It is **NOT** the original source publication
+        timestamp (e.g. when OFAC added an address to its list, or
+        when chainabuse received a report). True source-add timestamps
+        are not tracked in this version.
+
+        Evidence rows are derived from observations already collected
+        for the response (the floor's `supportingFlags` subset, the
+        OSINT result block, the internal address label catalog). No
+        new fetches are performed to build this list.
+
+        Phase 1 emits at most the first three of the four locked
+        kinds. `counterparty_interaction` is reserved in the schema
+        but not emitted in Phase 1.
+      properties:
+        kind:
+          type: string
+          enum:
+            - osint_match
+            - internal_label
+            - pattern_predicate
+            - counterparty_interaction
+          description: |
+            Locked enum. Additions are a public-contract change and
+            require explicit review.
+
+            * `osint_match` — the address is on a public OSINT list
+              (sanctions, scam DBs, phishing DBs, chainabuse community
+              reports). Fields: `source`, `matchedList`, `label`,
+              `detail?`, and for chainabuse rows the optional pair
+              `chainabuseCategories` + `chainabuseReportCount`.
+
+            * `internal_label` — the address has a hit in the
+              internal address-label catalog. Fields: `source`
+              (always `internal`), `label`.
+
+            * `pattern_predicate` — an analysis predicate fired on
+              the observed activity (e.g. `transit_wallet`,
+              `perm_hijack_detected`). Fields: `predicate` (stable
+              slug), `label` (human-readable), `flagText`
+              (the raw `flags` entry that triggered it; may be null
+              for synthesized meta-predicates like
+              `high_flag_density`), `detail?`.
+
+            * `counterparty_interaction` — RESERVED for Phase 2. Will
+              carry `address`, `label`, `interactionCount`,
+              `lastInteractionAt`, `valueUsd`. Phase 1 never emits
+              this kind.
+        observedAt:
+          type: string
+          format: date-time
+          description: |
+            Scorer-run timestamp (ISO-8601 with timezone offset).
+            Shared across every evidence row in a single response.
+            NOT a source publication or label-added timestamp.
+        source:
+          type: string
+          description: |
+            Origin of the evidence. For `osint_match`: the OSINT
+            source identifier (e.g. `chainabuse`, `ofac`, `osint`).
+            For `internal_label`: always `internal`. Omitted on
+            `pattern_predicate`.
+        matchedList:
+          type: string
+          description: |
+            For `osint_match` rows: the specific list within the
+            source (e.g. `chainabuse_reports`, `scam_list`,
+            `phishing_list`). Omitted on other kinds.
+        label:
+          type: string
+          description: |
+            Human-readable label for the evidence:
+            * `osint_match` — the label string from the OSINT source
+              (e.g. the scam label, or a fallback like "Known
+              phishing address" when the source did not provide one).
+            * `internal_label` — the internal catalog entry text.
+            * `pattern_predicate` — short human-readable label for
+              the predicate (e.g. "Transit wallet pattern").
+            * `counterparty_interaction` — the counterparty's label
+              (Phase 2).
+        detail:
+          type: string
+          nullable: true
+          description: |
+            Optional free-form detail string for any kind. Currently
+            used by `pattern_predicate` for the `high_flag_density`
+            meta-predicate (e.g. `"12 flags fired"`). Null when not
+            applicable.
+        chainabuseCategories:
+          type: array
+          items: { type: string }
+          description: |
+            For chainabuse `osint_match` rows: the categories
+            (e.g. `["scam", "phishing"]`) reported by the community.
+            Omitted on other rows.
+        chainabuseReportCount:
+          type: integer
+          minimum: 0
+          description: |
+            For chainabuse `osint_match` rows: the total reported
+            count. Omitted on other rows.
+        predicate:
+          type: string
+          description: |
+            For `pattern_predicate` rows: the stable predicate slug
+            (e.g. `transit_wallet`, `perm_hijack_detected`,
+            `sanctioned_self_label`, `high_flag_density`). Unknown
+            future flag patterns may surface as `unknown_predicate`
+            so the invariant "floor with supportingFlags > 0 ⇒
+            evidence > 0" holds without a Modal redeploy. Omitted on
+            other kinds.
+        flagText:
+          type: string
+          nullable: true
+          description: |
+            For `pattern_predicate` rows: the raw `flags` entry that
+            triggered the predicate. Null for synthesized meta-
+            predicates (e.g. `high_flag_density`). Omitted on other
+            kinds.
+        address:
+          type: string
+          description: |
+            RESERVED for `counterparty_interaction` (Phase 2). The
+            counterparty address.
+        interactionCount:
+          type: integer
+          minimum: 1
+          description: |
+            RESERVED for `counterparty_interaction` (Phase 2).
+        lastInteractionAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            RESERVED for `counterparty_interaction` (Phase 2).
+        valueUsd:
+          type: number
+          nullable: true
+          description: |
+            RESERVED for `counterparty_interaction` (Phase 2).
 
     Honeypot:
       type: object

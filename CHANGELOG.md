@@ -7,6 +7,14 @@ response shapes, status codes, error codes, and supported networks.
 Internal implementation, infrastructure, and tooling changes are not
 listed here.
 
+## 2026-05-18 - Structured `risk_evidence` on `/api/v1/check`
+
+Each entry in `riskReasons` now includes a structured `evidence` array surfacing the underlying observation (OSINT match, internal label, pattern predicate, counterparty interaction) behind the reason. Empty array when no structured evidence is available. No change to `riskScore`, `riskLevel`, `riskContributions`, `riskWeights`, or scoring math.
+
+Phase 1 populates structured evidence for floor-level reasons first; component reasons may return `evidence: []`.
+
+`observedAt` is the analysis/scorer timestamp, not the original source publication or label-added timestamp.
+
 ## 2026-05-18 - Deep-analysis network enum on `/api/v1/check/deep`
 
 `POST /api/v1/check/deep` now declares its supported network enum in OpenAPI:
