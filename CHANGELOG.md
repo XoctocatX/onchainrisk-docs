@@ -7,6 +7,14 @@ response shapes, status codes, error codes, and supported networks.
 Internal implementation, infrastructure, and tooling changes are not
 listed here.
 
+## 2026-05-18 - Deep-analysis network enum on `/api/v1/check/deep`
+
+`POST /api/v1/check/deep` now declares its supported network enum in OpenAPI:
+
+`eth, arbitrum, optimism, base, polygon, avalanche, linea, zksync, scroll, celo, cronos, fantom, moonbeam, polygon_zkevm`
+
+Unsupported networks now fail fast at the Worker boundary with `422 DEEP_ANALYSIS_UNSUPPORTED_NETWORK` before any upstream analysis call. This does not change the supported network set, pricing, or successful response shape.
+
 ## 2026-05-18 - Tron now supported on `/api/v1/token/check`
 
 Tron token contracts are now accepted on:

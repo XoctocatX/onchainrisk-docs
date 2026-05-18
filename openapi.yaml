@@ -474,7 +474,19 @@ paths:
               required: [address, network]
               properties:
                 address: { type: string }
-                network: { type: string }
+                network:
+                  type: string
+                  enum: [eth, arbitrum, optimism, base, polygon, avalanche, linea, zksync, scroll, celo, cronos, fantom, moonbeam, polygon_zkevm]
+                  description: |
+                    Networks where deep analysis (peel chain detection)
+                    is production-verified. Networks accepted by
+                    `/api/v1/check` validation but not in this set
+                    (`bsc`, `btc`, `ltc`, `sol`, `tron`, `ton`,
+                    `cosmos`, `cardano`, `xrp`) return `422
+                    DEEP_ANALYSIS_UNSUPPORTED_NETWORK` at the Worker
+                    boundary before any upstream analysis call —
+                    matching the `deep-analysis-unsupported-network`
+                    example below. No credits are charged on this path.
                 reportId: { type: string, description: "Attach result to existing report" }
       responses:
         '200':
