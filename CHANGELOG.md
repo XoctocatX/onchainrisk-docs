@@ -7,6 +7,51 @@ response shapes, status codes, error codes, and supported networks.
 Internal implementation, infrastructure, and tooling changes are not
 listed here.
 
+## 2026-05-18 - Tron now supported on `/api/v1/token/check`
+
+Tron token contracts are now accepted on:
+
+- `POST /api/v1/token/check`
+- `POST /api/v1/token/check/stream`
+- `POST /api/v1/token/reports`
+
+### Enum widening
+
+The `network` enum on `/api/v1/token/check` is now:
+`eth, bsc, arbitrum, optimism, base, polygon, avalanche, linea, zksync, tron`
+(10 networks).
+
+### Tron-specific result shape
+
+Tron honeypot detection is **honeypot-only**. The following fields are
+intentionally `null` for `network=tron`:
+
+- `tokenScore` (security-category scoring requires EVM JSON-RPC)
+- `topHolders` (holder enumeration requires EVM JSON-RPC)
+- `tokenMeta` (name/symbol/decimals/totalSupply requires EVM JSON-RPC)
+
+The `honeypot` object follows the same `honeypot.status` enum contract
+introduced 2026-05-18:
+
+- `status='ok'` — 15 measurable fields populated (`buyTax`, `sellTax`,
+  `isHoneypot`, etc.)
+- `status='unable_to_verify' | 'not_supported' | 'no_data'` — all
+  measurable fields are `null`; `reason` is populated
+
+### Billing semantics (unchanged from 2026-05-18 status-enum release)
+
+- Tron `status='ok'` save: charged 1 credit + `token_reports` row +
+  `usage` row.
+- Tron non-ok save: **not charged**, no row, response `charged: false`.
+
+### Scroll remains unsupported
+
+`network='scroll'` still returns `422
+NETWORK_NOT_SUPPORTED_FOR_TOKEN_CHECK` on `/api/v1/token/check`. Scroll
+enablement is deferred until the upstream honeypot detector ships
+scroll support.
+
+
 ## 2026-05-18 - Explicit `honeypot.status` enum on `/api/v1/token/check`
 
 The `honeypot` field returned by `POST /api/v1/token/check` (and the

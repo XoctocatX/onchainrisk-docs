@@ -537,12 +537,22 @@ paths:
                 address: { type: string, description: "Token contract address" }
                 network:
                   type: string
-                  enum: [eth, bsc, arbitrum, optimism, base, polygon, avalanche, linea, zksync]
+                  enum: [eth, bsc, arbitrum, optimism, base, polygon, avalanche, linea, zksync, tron]
                   description: |
                     Networks where token analysis is production-verified.
                     Other networks (scroll, celo, cronos, fantom, moonbeam,
-                    polygon_zkevm, and non-EVM chains) return 422
+                    polygon_zkevm, and remaining non-EVM chains) return 422
                     NETWORK_NOT_SUPPORTED_FOR_TOKEN_CHECK.
+
+                    Tron exception (F-002b-2, 2026-05-18): Tron is supported
+                    as a *honeypot-only* surface. The response carries the
+                    full `honeypot` object with the `honeypot.status` enum
+                    contract (see schema), but `tokenScore`, `topHolders`,
+                    and `tokenMeta` are intentionally `null` for `tron` —
+                    those sections require EVM JSON-RPC, which is not
+                    available on tron. Billing/save semantics are unchanged:
+                    `status='ok'` saves charge 1 credit; non-ok statuses
+                    return `charged: false` and no row is created.
       responses:
         '200':
           description: Token security analysis
