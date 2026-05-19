@@ -7,6 +7,16 @@ response shapes, status codes, error codes, and supported networks.
 Internal implementation, infrastructure, and tooling changes are not
 listed here.
 
+## 2026-05-19 - `/api/v1/multichain/analyze` reserves cost at request acceptance
+
+`POST /api/v1/multichain/analyze` now reserves the analysis cost (5 credits) atomically at request acceptance time, rather than writing five separate per-network charges after the analysis completes.
+
+No change to the total cost charged for a successful analysis (still 5 credits), no change to the response shape (`{reportId, status:'analyzing', cost: 5}` at HTTP 202), no change to the `/api/v1/multichain/scan` endpoint.
+
+Visible behavior change: the user's `checks_used` / `credits` deduction now happens at request acceptance, not at completion. On analysis failure the reservation is automatically returned to the user's quota — failed multichain operations are not billed.
+
+Concurrent overspend on near-quota accounts is now correctly prevented: two simultaneous requests for the same user cannot both pass the quota check.
+
 ## 2026-05-18 - Structured `risk_evidence` on `/api/v1/check`
 
 Each entry in `riskReasons` now includes a structured `evidence` array surfacing the underlying observation (OSINT match, internal label, pattern predicate, counterparty interaction) behind the reason. Empty array when no structured evidence is available. No change to `riskScore`, `riskLevel`, `riskContributions`, `riskWeights`, or scoring math.
