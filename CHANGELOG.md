@@ -7,6 +7,28 @@ response shapes, status codes, error codes, and supported networks.
 Internal implementation, infrastructure, and tooling changes are not
 listed here.
 
+## 2026-05-20 - `/api/v1/multichain/analyze` honors saved custom risk settings
+
+`POST /api/v1/multichain/analyze` now applies the same user-saved custom weights, custom override floors, and custom labels that `/api/v1/check` already honored. Per-network risk scores and the composite risk score reflect a Business+ user's `PATCH /api/user/risk-settings` configuration.
+
+No change to the public request body — the dashboard / API client still sends only `{ address, networks }`. Customs are loaded server-side from your saved configuration. No change to the response shape (`{ reportId, status, cost: 5 }` at HTTP 202).
+
+The companion `/api/v1/multichain/scan` endpoint returns balances and token holdings only — no risk scoring — so saved customs have no effect there.
+
+## 2026-05-20 - Critical override floor surface expanded from 9 to 14 keys
+
+`PATCH /api/user/risk-settings` now accepts five additional override floor keys: `frozen`, `mixer`, `campaign_heavy`, `campaign`, `flag_density`. The full set of customizable floors is now exactly 14 keys, aligned across Worker, scorer, and Dashboard Settings UI:
+
+`sanctioned`, `exploit`, `perm_hijack`, `transit_massive`, `transit`, `mixer`, `railgun_low_anon`, `railgun`, `scam`, `phishing`, `campaign_heavy`, `campaign`, `frozen`, `flag_density`.
+
+`GET /api/user/risk-settings` now merges current defaults with stored overrides on read, so legacy 9-key rows return 14-key responses (with user-set values preserved verbatim and missing keys defaulted). Pre-existing values are not modified; clamping (`[50, 100]` for any numeric override) and the Business+ plan gate are unchanged.
+
+Three token-security floors (`floor_honeypot`, `floor_excessive_tax`, `floor_low_token_score`) remain hardcoded at fixed values (80 / 70 / 60) and are NOT part of the customizable surface. See the `RiskReason.code` description in OpenAPI for the split.
+
+## 2026-05-20 - `/api/v1/token/check` Tron support re-enabled
+
+`POST /api/v1/token/check` now accepts `network: "tron"` again. Supported networks are now 10: eth, bsc, arbitrum, optimism, base, polygon, avalanche, linea, zksync, tron. Unsupported networks still return `422 NETWORK_NOT_SUPPORTED_FOR_TOKEN_CHECK` with a list of currently-supported networks.
+
 ## 2026-05-19 - `/api/v1/multichain/analyze` reserves cost at request acceptance
 
 `POST /api/v1/multichain/analyze` now reserves the analysis cost (5 credits) atomically at request acceptance time, rather than writing five separate per-network charges after the analysis completes.

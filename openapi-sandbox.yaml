@@ -31,7 +31,7 @@ info:
     ## Authentication
 
     Create a sandbox API key in the dashboard at
-    https://onchainrisk.io/dashboard/api-keys. Free-tier accounts can create
+    https://app.onchainrisk.io/dashboard/api-keys. Free-tier accounts can create
     a sandbox key. Key management (create, list, revoke) is dashboard-only
     and intentionally not exposed here.
 
@@ -118,7 +118,7 @@ info:
     useful diagnostic context; both may be `null` or absent.
   contact:
     name: OnChainRisk Support
-    url: https://onchainrisk.io/dashboard/support
+    url: https://app.onchainrisk.io/dashboard/support
     email: admin@onchainrisk.io
 
 servers:

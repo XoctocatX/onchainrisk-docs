@@ -10,7 +10,7 @@ info:
 
     ## Authentication
 
-    Authenticate with an API key. Create keys in [API Keys](https://onchainrisk.io/dashboard/api-keys) (requires Pro plan or above).
+    Authenticate with an API key. Create keys in [API Keys](https://app.onchainrisk.io/dashboard/api-keys) (requires Pro plan or above).
 
     Send your key in the `Authorization` header:
     ```
@@ -117,7 +117,7 @@ info:
   version: 2.0.0
   contact:
     name: OnChainRisk Support
-    url: https://onchainrisk.io/dashboard/support
+    url: https://app.onchainrisk.io/dashboard/support
     email: admin@onchainrisk.io
 
 servers:
@@ -461,7 +461,17 @@ paths:
     post:
       tags: [Analysis]
       summary: Deep analysis (peel chain detection)
-      description: Trace transaction origin through intermediary wallets. Detects peel chains and fund splitting. Costs 1 check credit.
+      description: |
+        Trace transaction origin through intermediary wallets. Detects
+        peel chains and fund splitting. Costs 1 check credit.
+
+        **Saved custom risk settings do not apply here.** Custom weights
+        (`custom_weights`), custom override floors (`custom_overrides`),
+        and custom labels (`custom_labels`) are not forwarded to the
+        deep-analysis pipeline because the response carries `peelChain`
+        only — no `riskScore` / `riskLevel` / `riskReasons`. To get a
+        scored result that honors your saved settings, call
+        `/api/v1/check` instead. (F-H — #52.2 docs hardening.)
       security:
         - apiKeyAuth: []
         - apiKeyAuth: []
@@ -712,6 +722,15 @@ paths:
       summary: Full multi-chain risk analysis
       description: |
         Run full risk analysis on each active network. Background job with progress polling. Returns composite risk score and per-network breakdown. Costs 5 check credits.
+
+        **Saved custom risk settings apply.** Since 2026-05-20 (PR #76),
+        per-network and composite scores honor the same saved
+        `custom_weights`, `custom_overrides`, and `custom_labels` that
+        `/api/v1/check` already applies. Customs are loaded server-side
+        from your `PATCH /api/user/risk-settings` state; the request body
+        from the dashboard / API client stays `{ address, networks }`.
+        `/api/v1/multichain/scan` is balance / holdings only — no risk
+        scoring, so customs have nowhere to land there.
       security:
         - apiKeyAuth: []
         - apiKeyAuth: []
@@ -2011,7 +2030,7 @@ components:
     apiKeyAuth:
       type: http
       scheme: bearer
-      description: API key (create at https://onchainrisk.io/dashboard/api-keys)
+      description: API key (create at https://app.onchainrisk.io/dashboard/api-keys)
 
   responses:
     ValidationFailed:
@@ -2447,12 +2466,24 @@ components:
           description: |
             Effective per-component weights actually used for THIS scoring
             run, after custom_weights validation/normalization and EOA
-            redistribution (contract_risk → 0, redistributed across
-            mixer/sanctioned/behavioral). NOT the static module-default
-            weights. Sum of values is 1.0 (within float tolerance).
-            Keys are the same seven components as `riskContributions` so
-            the two maps can be zipped client-side. Null on pre-
-            explainability Modal versions.
+            redistribution. NOT the static module-default weights.
+
+            **EOA redistribution rule:** when the analyzed target is an
+            externally-owned account (EOA), the `contract_risk` weight is
+            zeroed and its share is proportionally redistributed across
+            `mixer_interaction`, `sanctioned_contact`, and
+            `behavioral_patterns`. A user who PATCHed their saved
+            `custom_weights` with e.g. `contract_risk: 0.20` will therefore
+            see `riskWeights.contract_risk: 0` on an EOA target — the
+            value was applied, then redistributed by the scorer. This
+            transformation is intentional and only affects EOA targets;
+            contract targets see weights as PATCHed. (F-R — #52.2 docs
+            hardening.)
+
+            Sum of values is 1.0 (within float tolerance). Keys are the
+            same seven components as `riskContributions` so the two maps
+            can be zipped client-side. Null on pre-explainability Modal
+            versions.
         riskReasons:
           type: array
           description: |
@@ -2885,6 +2916,25 @@ components:
             was applied to `riskScore` because a high-severity signal
             fired. Each floor reason carries the matching flag subset
             in `supportingFlags`.
+
+            **Customizable floors (14)** — the floors below the
+            `floor_honeypot` / `floor_excessive_tax` /
+            `floor_low_token_score` group are user-customizable via
+            `PATCH /api/user/risk-settings` (`overrides` field) on the
+            Business plan. The 14 customizable keys are: `sanctioned`,
+            `exploit`, `scam`, `phishing`, `frozen`, `mixer`,
+            `perm_hijack`, `transit`, `transit_massive`, `railgun`,
+            `railgun_low_anon`, `campaign`, `campaign_heavy`,
+            `flag_density`. Worker / Modal / Dashboard align on this
+            14-key set as of 2026-05-20 (PR #77 / PR #78).
+
+            **Token-security floors (3, hardcoded)** —
+            `floor_honeypot`, `floor_excessive_tax`,
+            `floor_low_token_score` are not part of the customizable
+            surface. Their floor values are fixed (80 / 70 / 60) and
+            cannot be tuned via `custom_overrides`. (F-I — #52.2 docs
+            hardening; revisit if user signal warrants promotion to
+            customizable.)
 
             **Component codes** — the seven scorer components (same
             keys as `riskContributions` / `riskWeights`). Each
