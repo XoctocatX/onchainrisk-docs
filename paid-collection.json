@@ -1343,6 +1343,32 @@
           }
         },
         {
+          "name": "GET /api/v1/block/reports/{id} \u2014 fetch saved block report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{paid_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/block/reports/{{sample_report_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "block",
+                "reports",
+                "{{sample_report_id}}"
+              ]
+            },
+            "description": "Fetch one saved block report by id. Accepts the UUID reportPublicId returned by POST /api/v1/block/analyze (preferred) or the legacy integer id. Owned by the calling key; 404 otherwise. Does not consume quota."
+          }
+        },
+        {
           "name": "GET /api/v1/mev/bots \u2014 known MEV bot stats",
           "request": {
             "method": "GET",
@@ -1552,6 +1578,32 @@
                 "reports"
               ]
             }
+          }
+        },
+        {
+          "name": "GET /api/v1/multichain/reports/{id} — fetch saved multi-chain report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{paid_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/multichain/reports/{{sample_report_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "multichain",
+                "reports",
+                "{{sample_report_id}}"
+              ]
+            },
+            "description": "Fetch one saved multi-chain report by id. Accepts the UUID reportPublicId returned by POST /api/v1/multichain/scan (preferred) or the legacy integer id. Owned by the calling key; 404 otherwise. Does not consume quota."
           }
         }
       ]

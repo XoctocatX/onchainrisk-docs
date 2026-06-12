@@ -7,6 +7,12 @@ response shapes, status codes, error codes, and supported networks.
 Internal implementation, infrastructure, and tooling changes are not
 listed here.
 
+## 2026-06-12 - `GET /api/v1/block/reports/{id}` and `/api/v1/multichain/reports/{id}` accept the UUID reportId
+
+`GET`, `PATCH`, and `DELETE` on `/api/v1/block/reports/{id}` and `/api/v1/multichain/reports/{id}` now accept the UUID `reportPublicId` returned by `POST /api/v1/block/analyze` and `POST /api/v1/multichain/scan`, in addition to the legacy integer id. Previously these routes accepted the integer id only, so the UUID handed back by the analysis endpoints could not be used to retrieve, rename, or delete the report.
+
+The `GET` responses now also include `reportPublicId`. Ownership and error behavior are unchanged: a report that does not exist or is not owned by the caller returns `404`.
+
 ## 2026-06-12 - Documented `GET /api/reports/{reportId}` for fetching completed reports
 
 `GET /api/reports/{reportId}` is now part of the documented public API surface. It returns one of your own reports by its `reportId` — the UUID returned by `POST /api/v1/check` (a legacy integer id also works) — and is the supported way to fetch the full analysis after an async scan completes.

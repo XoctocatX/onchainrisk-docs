@@ -1843,6 +1843,34 @@ paths:
         '200':
           description: Paginated list
 
+  /api/v1/block/reports/{id}:
+    get:
+      tags: [Saved Reports]
+      summary: Fetch a saved block (MEV) report by id
+      description: |
+        Retrieve one saved block report owned by the calling API key. Does NOT
+        consume quota.
+
+        `id` accepts the UUID `reportPublicId` returned by
+        `POST /api/v1/block/analyze` (preferred), or the legacy integer report
+        id. Returns 404 if the report does not exist or is not owned by the
+        caller.
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Report id — UUID reportPublicId (preferred) or legacy integer id.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Saved block report
+        '401':
+          description: Unauthorized
+        '404':
+          description: Report not found or not owned by the caller
+
   /api/v1/multichain/reports:
     post:
       tags: [Saved Reports]
@@ -1883,6 +1911,34 @@ paths:
       responses:
         '200':
           description: Paginated list
+
+  /api/v1/multichain/reports/{id}:
+    get:
+      tags: [Saved Reports]
+      summary: Fetch a saved multi-chain report by id
+      description: |
+        Retrieve one saved multi-chain wallet report owned by the calling API
+        key. Does NOT consume quota.
+
+        `id` accepts the UUID `reportPublicId` returned by
+        `POST /api/v1/multichain/scan` (preferred), or the legacy integer
+        report id. Returns 404 if the report does not exist or is not owned by
+        the caller.
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Report id — UUID reportPublicId (preferred) or legacy integer id.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Saved multi-chain report
+        '401':
+          description: Unauthorized
+        '404':
+          description: Report not found or not owned by the caller
 
   # ── MEV ───────────────────────────────────────────────
   /api/v1/mev/bots:
