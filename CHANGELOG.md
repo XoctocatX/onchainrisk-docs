@@ -7,6 +7,14 @@ response shapes, status codes, error codes, and supported networks.
 Internal implementation, infrastructure, and tooling changes are not
 listed here.
 
+## 2026-06-12 - Documented `GET /api/reports/{reportId}` for fetching completed reports
+
+`GET /api/reports/{reportId}` is now part of the documented public API surface. It returns one of your own reports by its `reportId` — the UUID returned by `POST /api/v1/check` (a legacy integer id also works) — and is the supported way to fetch the full analysis after an async scan completes.
+
+`GET /api/v1/check/status/{reportId}` is lifecycle-only: it returns the `queued` / `analyzing` / `complete` / `failed` status and a risk summary, never the full report body. Poll it until `status` is `complete`, then call `GET /api/reports/{reportId}` for the result.
+
+No new endpoint and no behavior change — the path already accepted API keys; this documents it and corrects the async flow, which previously pointed to the address-keyed `GET /api/v1/check/{address}`. Returns `404` if the report does not exist or is not owned by the caller. Does not consume quota.
+
 ## 2026-05-20 - `/api/v1/multichain/analyze` honors saved custom risk settings
 
 `POST /api/v1/multichain/analyze` now applies the same user-saved custom weights, custom override floors, and custom labels that `/api/v1/check` already honored. Per-network risk scores and the composite risk score reflect a Business+ user's `PATCH /api/user/risk-settings` configuration.

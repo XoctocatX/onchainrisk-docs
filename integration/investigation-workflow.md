@@ -58,7 +58,7 @@ curl -X POST https://api.onchainrisk.io/api/v1/check \
 
 **Validation errors** return HTTP **422** with `error.code = "VALIDATION_ERROR"` and `error.details.errorCode` carrying a stable machine code (`INVALID_ADDRESS`, `UNSUPPORTED_NETWORK`, `ADDRESS_NETWORK_MISMATCH`).
 
-**Async path:** for high-volume EVM addresses the API may return HTTP **202** with a `reportId`. Poll `GET /api/v1/check/status/{reportId}` until `status: "complete"` or `"failed"`. Light addresses return synchronously.
+**Async path:** for high-volume EVM addresses the API may return HTTP **202** with a `reportId`. Poll `GET /api/v1/check/status/{reportId}` until `status: "complete"` or `"failed"` — this status endpoint is lifecycle-only. Once complete, fetch the full report with `GET /api/reports/{reportId}` (see § Reports below). Light addresses return synchronously.
 
 ---
 
