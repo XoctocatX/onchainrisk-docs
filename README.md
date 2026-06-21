@@ -10,30 +10,35 @@
 
 ## Get started in ~60s
 
-1. **Get an API key** → https://app.onchainrisk.io/dashboard/api-keys (Pro plan or higher for API access).
-2. **Call the wallet risk API** with `Authorization: Bearer <your key>`.
-3. **Read the result** — `riskScore` (0–100), `riskLevel` (`high`/`medium`/`low`), and risk signals in `patternFlags` / `riskReasons`.
+1. **Create a sandbox API key** → https://app.onchainrisk.io/dashboard/api-keys (free-tier accounts can create a sandbox key; sandbox keys are prefixed `ocr_test_`).
+2. **Run a test call** in sandbox — `POST /api/v1/check` with `Authorization: Bearer <your sandbox key>`.
+3. **Inspect the result** — `riskScore` (0–100), `riskLevel` (`high`/`medium`/`low`), and risk signals in `patternFlags` / `riskReasons`.
+4. **Upgrade to a paid key** for production / full checks once your integration is tested.
 
 ```bash
-export ONCHAINRISK_API_KEY="ocr_your_key_here"
+export ONCHAINRISK_API_KEY="ocr_test_your_sandbox_key"
 
-curl -s https://api.onchainrisk.io/api/v1/check/0x742d35Cc6634C0532925a3b844Bc454e4438f44e \
-  -H "Authorization: Bearer $ONCHAINRISK_API_KEY"
+curl -s https://api.onchainrisk.io/api/v1/check \
+  -H "Authorization: Bearer $ONCHAINRISK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"address":"0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045","network":"eth"}'
 ```
 
-> `GET /api/v1/check/{address}` returns a **cached** report if one exists and does **not** consume quota. Add `?force=true` to run a fresh analysis (counts as one check), and `?network=eth` to pick a network. Replace the address with `0xYOUR_ADDRESS`.
+> **Sandbox is for integration testing** — confirm auth, validate response shapes, and wire your client against real addresses (cheap modules, recent-activity window). **Paid keys are for production / full checks.** The same `POST /api/v1/check` works with both: a sandbox key returns the sandbox profile (with a `_sandbox` marker and some expensive fields gated); a paid key returns the full analysis. See the [sandbox docs](https://api.onchainrisk.io/sandbox-docs). Replace the address with `0xYOUR_ADDRESS`.
 
 ---
 
 ## Examples
 
-**Server:** `https://api.onchainrisk.io` · **Auth:** `Authorization: Bearer $ONCHAINRISK_API_KEY` · **Endpoint:** `GET /api/v1/check/{address}`
+**Server:** `https://api.onchainrisk.io` · **Auth:** `Authorization: Bearer $ONCHAINRISK_API_KEY` · **Endpoint:** `POST /api/v1/check` (same call for a sandbox `ocr_test_` key or a paid key)
 
 ### curl
 
 ```bash
-curl -s "https://api.onchainrisk.io/api/v1/check/0xYOUR_ADDRESS?network=eth" \
-  -H "Authorization: Bearer $ONCHAINRISK_API_KEY"
+curl -s https://api.onchainrisk.io/api/v1/check \
+  -H "Authorization: Bearer $ONCHAINRISK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"address":"0xYOUR_ADDRESS","network":"eth"}'
 ```
 
 ### Python (`requests`)
@@ -42,12 +47,11 @@ curl -s "https://api.onchainrisk.io/api/v1/check/0xYOUR_ADDRESS?network=eth" \
 import os, requests
 
 key = os.environ["ONCHAINRISK_API_KEY"]
-address = "0xYOUR_ADDRESS"
 
-r = requests.get(
-    f"https://api.onchainrisk.io/api/v1/check/{address}",
+r = requests.post(
+    "https://api.onchainrisk.io/api/v1/check",
     headers={"Authorization": f"Bearer {key}"},
-    params={"network": "eth"},
+    json={"address": "0xYOUR_ADDRESS", "network": "eth"},
     timeout=30,
 )
 r.raise_for_status()
@@ -59,12 +63,15 @@ print(data["riskScore"], data["riskLevel"], data["patternFlags"])
 
 ```js
 const key = process.env.ONCHAINRISK_API_KEY;
-const address = "0xYOUR_ADDRESS";
 
-const res = await fetch(
-  `https://api.onchainrisk.io/api/v1/check/${address}?network=eth`,
-  { headers: { Authorization: `Bearer ${key}` } },
-);
+const res = await fetch("https://api.onchainrisk.io/api/v1/check", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${key}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({ address: "0xYOUR_ADDRESS", network: "eth" }),
+});
 if (!res.ok) throw new Error(`HTTP ${res.status}`);
 const data = await res.json();
 console.log(data.riskScore, data.riskLevel, data.patternFlags);
@@ -74,7 +81,7 @@ console.log(data.riskScore, data.riskLevel, data.patternFlags);
 
 ## Sample response
 
-Trimmed from the OpenAPI spec (see [`openapi.yaml`](https://api.onchainrisk.io/openapi.yaml) for the full `AnalysisResult` schema). Wallet (EOA) and contract responses share the same shape; contracts add `contractAnalysis` / `contractInfo`.
+Trimmed from the OpenAPI spec (see [`openapi.yaml`](https://api.onchainrisk.io/openapi.yaml) for the full `AnalysisResult` schema). Wallet (EOA) and contract responses share the same shape; contracts add `contractAnalysis` / `contractInfo`. **Sandbox** responses keep this same core envelope and add a `_sandbox` object (`profile: "sandbox"`) with some expensive fields gated — see the [sandbox docs](https://api.onchainrisk.io/sandbox-docs).
 
 ```json
 {
@@ -107,8 +114,8 @@ Risk signals surface in `patternFlags` (human-readable, e.g. `"OFAC/sanctions li
 
 ## Auth, quota & errors
 
-- **Auth:** every request needs `Authorization: Bearer <API key>`. Create/rotate keys at https://app.onchainrisk.io/dashboard/api-keys (API access requires Pro plan or higher).
-- **Quota:** `GET /api/v1/check/{address}` returns cache and is free; a fresh analysis (`?force=true`, or `POST /api/v1/check`) costs **1 check**. Responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-Credits-Remaining` headers.
+- **Auth:** every request needs `Authorization: Bearer <API key>`. Create/rotate keys at https://app.onchainrisk.io/dashboard/api-keys — **sandbox keys** (`ocr_test_`, free-tier) for integration testing, **paid keys** for production / full checks.
+- **Quota:** in production, a fresh `POST /api/v1/check` costs **1 check**; `GET /api/v1/check/{address}` returns cache for free (add `?force=true` to force a fresh check). Responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-Credits-Remaining` headers.
 - **Errors:** `401` unauthorized (missing/invalid key), `429` quota or rate limit exceeded, `404` not found.
 
 Full request/response detail, parameters, and every endpoint: **[OpenAPI spec](https://api.onchainrisk.io/openapi.yaml)** · **[API reference](https://api.onchainrisk.io/docs)**.
