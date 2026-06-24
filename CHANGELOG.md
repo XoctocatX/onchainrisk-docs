@@ -7,6 +7,31 @@ response shapes, status codes, error codes, and supported networks.
 Internal implementation, infrastructure, and tooling changes are not
 listed here.
 
+## 2026-06-24 - Structured sandbox blocked-endpoint errors
+
+Calling a paid-only or unsupported endpoint with a sandbox API key now returns
+a structured `403` instead of a bare error string, so clients can tell what to
+do next.
+
+### Changed response fields
+The `403` body from sandbox-blocked endpoints now contains:
+- `error.code` — still `sandbox_not_supported` (unchanged).
+- `error.reason` — `paid_only` (endpoint exists but is a paid feature) or
+  `unsupported` (path is not part of the sandbox API).
+- `error.upgrade_required` — boolean.
+- `error.message`, `error.endpoint` (the blocked `METHOD path`),
+  `error.docs_url`, `error.upgrade_url`, `error.hint`.
+- `_sandbox.allowed_endpoint` (`POST /api/v1/check`) and `_sandbox.reports_saved`.
+
+### Compatibility
+`error` changed from a string to an object. `error.code` preserves the previous
+value `sandbox_not_supported` — check `error.code` (and `error.reason` for the
+finer distinction).
+
+### Notes
+Sandbox reports are not saved (`_sandbox.reports_saved: false`). Persistent
+reports and retrieval are a paid plan feature.
+
 ## 2026-06-12 - `GET /api/v1/block/reports/{id}` and `/api/v1/multichain/reports/{id}` accept the UUID reportId
 
 `GET`, `PATCH`, and `DELETE` on `/api/v1/block/reports/{id}` and `/api/v1/multichain/reports/{id}` now accept the UUID `reportPublicId` returned by `POST /api/v1/block/analyze` and `POST /api/v1/multichain/scan`, in addition to the legacy integer id. Previously these routes accepted the integer id only, so the UUID handed back by the analysis endpoints could not be used to retrieve, rename, or delete the report.

@@ -354,18 +354,79 @@ components:
               upgrade_url: { type: string }
 
     SandboxNotSupported:
-      description: Endpoint not available for sandbox keys
+      description: |
+        Endpoint not available for sandbox keys. The body is actionable and
+        machine-readable. `error.code` stays `sandbox_not_supported` for
+        backward compatibility; `error.reason` carries the finer distinction:
+        `paid_only` when the endpoint exists but is a paid feature, or
+        `unsupported` when the path is not part of the sandbox API at all
+        (e.g. a guessed/nonexistent endpoint shape). No risk or report data is
+        returned. Sandbox reports are never saved (`_sandbox.reports_saved`
+        is always `false`); persistent reports and retrieval are a paid plan
+        feature.
       content:
         application/json:
           schema:
             type: object
             properties:
               success: { type: boolean, example: false }
-              error: { type: string, example: "sandbox_not_supported" }
-              message: { type: string }
-              endpoint: { type: string }
-              upgrade_url: { type: string }
-              docs_url: { type: string }
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    enum: [sandbox_not_supported]
+                    description: Preserved for backward compatibility.
+                  reason:
+                    type: string
+                    enum: [paid_only, unsupported]
+                  upgrade_required: { type: boolean }
+                  message: { type: string }
+                  endpoint:
+                    type: string
+                    description: "The blocked request, e.g. 'POST /api/v1/check/deep'."
+                  docs_url: { type: string }
+                  upgrade_url: { type: string }
+                  hint: { type: string }
+                required: [code, reason, upgrade_required, message, endpoint]
+              _sandbox:
+                type: object
+                properties:
+                  allowed_endpoint: { type: string, example: "POST /api/v1/check" }
+                  reports_saved: { type: boolean, example: false }
+          examples:
+            paid-only:
+              summary: A real, paid-only endpoint (reason=paid_only)
+              value:
+                success: false
+                error:
+                  code: "sandbox_not_supported"
+                  reason: "paid_only"
+                  upgrade_required: true
+                  message: "This endpoint is available on paid API plans."
+                  endpoint: "POST /api/v1/check/deep"
+                  docs_url: "https://api.onchainrisk.io/sandbox-docs"
+                  upgrade_url: "https://onchainrisk.io/pricing"
+                  hint: "Sandbox keys can call POST /api/v1/check with { address, network }."
+                _sandbox:
+                  allowed_endpoint: "POST /api/v1/check"
+                  reports_saved: false
+            unsupported:
+              summary: Path not part of the sandbox API — guessed/nonexistent (reason=unsupported)
+              value:
+                success: false
+                error:
+                  code: "sandbox_not_supported"
+                  reason: "unsupported"
+                  upgrade_required: false
+                  message: "This endpoint is not part of the sandbox API."
+                  endpoint: "GET /api/v1/address/0xabc"
+                  docs_url: "https://api.onchainrisk.io/sandbox-docs"
+                  upgrade_url: "https://onchainrisk.io/pricing"
+                  hint: "Sandbox keys can call POST /api/v1/check with { address, network }."
+                _sandbox:
+                  allowed_endpoint: "POST /api/v1/check"
+                  reports_saved: false
 
     ValidationFailed:
       description: |
