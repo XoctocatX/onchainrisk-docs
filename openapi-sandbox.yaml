@@ -550,6 +550,47 @@ components:
           type: string
           format: uri
           example: "https://onchainrisk.io/coverage"
+        served_from:
+          type: string
+          enum: [hot, archive, direct_node, direct_api, mixed]
+          description: |
+            Optional hybrid read-model disclosure. Which read path served this
+            report: `hot` (own indexer / hot store), `archive` (replayed from
+            archive), `direct_node` (point node lookup), `direct_api`
+            (third-party API fallback, e.g. Moralis), or `mixed` (hot/indexer
+            data combined with a point lookup such as `eth_getCode` is_contract).
+            Absent when the producer does not yet emit hybrid disclosure.
+        historical_completeness:
+          type: string
+          enum: [within_window, replayed_from_archive, partial_via_fallback, unknown_before_window]
+          description: |
+            Optional hybrid read-model disclosure. Depth completeness of the
+            served data: `within_window` (full depth within the stated window),
+            `replayed_from_archive` (archive replay restored depth),
+            `partial_via_fallback` (a third-party fallback supplied partial
+            depth), or `unknown_before_window` (the indexer window limited how
+            far back depth is known). Absent when not emitted by the producer.
+        fallback_used:
+          type: boolean
+          description: |
+            Optional hybrid read-model disclosure. `true` when a third-party /
+            direct-API fallback (e.g. Moralis) supplied the analytical data.
+            A point lookup such as `eth_getCode` / is_contract alone does NOT
+            set this. Absent when not emitted by the producer.
+        source_mode:
+          type: string
+          description: |
+            Optional hybrid read-model disclosure. Free-form source label, e.g.
+            `mixed` (hot indexer + point lookup), `hot:<data_path>`, or
+            `fallback:moralis`. Informational; not an enum. Absent when not
+            emitted by the producer.
+        coverage_window:
+          type: [string, 'null']
+          example: "30d"
+          description: |
+            Optional alias of `window` — same value, provided for hybrid
+            read-model consumers that key on `coverage_window`. Does NOT change
+            the meaning of `window`. Absent when not emitted by the producer.
       example:
         stage: rollout
         window: "30d"
@@ -557,6 +598,11 @@ components:
         as_of: "2026-05-04"
         disclosure: "OnChainRisk's multi-chain coverage is in active rollout..."
         matrix_url: https://onchainrisk.io/coverage
+        served_from: hot
+        historical_completeness: within_window
+        fallback_used: false
+        source_mode: "hot:self_hosted_nitro_clickhouse"
+        coverage_window: "30d"
 
     ErrorResponse:
       type: object

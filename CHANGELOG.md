@@ -7,6 +7,26 @@ response shapes, status codes, error codes, and supported networks.
 Internal implementation, infrastructure, and tooling changes are not
 listed here.
 
+## 2026-06-25 - Optional coverage disclosure fields
+
+The `coverage` block on `/api/v1/check` responses may now carry additional
+**optional** read-model disclosure fields. They are additive: the existing
+required coverage fields are unchanged, and clients that ignore them are
+unaffected.
+
+### Added response fields (all optional, on the `coverage` object)
+- `served_from` — `hot` | `archive` | `direct_node` | `direct_api` | `mixed`
+- `historical_completeness` — `within_window` | `replayed_from_archive` | `partial_via_fallback` | `unknown_before_window`
+- `fallback_used` — boolean
+- `source_mode` — string label
+- `coverage_window` — string; an alias of the existing `window` (same value)
+
+### Notes
+These fields are emitted only where coverage provenance is confirmed (currently
+Arbitrum's self-hosted path) or a producer signal is available; for other
+networks they are omitted rather than guessed. No change to coverage `stage`,
+supported networks, or any data path.
+
 ## 2026-06-24 - Structured sandbox blocked-endpoint errors
 
 Calling a paid-only or unsupported endpoint with a sandbox API key now returns
