@@ -6,7 +6,13 @@ info:
 
     ---
 
-    Blockchain forensics and wallet risk analysis API. Analyze addresses, trace transactions, detect honeypot tokens, and investigate blockchain activity across 23 networks.
+    Blockchain forensics and wallet risk analysis API. Analyze addresses, trace transactions, detect honeypot tokens, and investigate blockchain activity.
+
+    `POST /api/v1/check` accepts **23 networks** at validation. Acceptance is not a coverage
+    guarantee: per-network coverage stage and historical window vary by chain and are published
+    in the live coverage matrix at https://app.onchainrisk.io/coverage. Endpoint-specific network
+    support is narrower for some endpoints (for example deep analysis and token check) and is
+    enforced with a structured `422` at the request boundary.
 
     ## Authentication
 
@@ -1685,6 +1691,17 @@ paths:
                   edges:
                     type: array
                     items: { $ref: '#/components/schemas/GraphEdge' }
+                  outcome:
+                    type: string
+                    enum: [complete, empty_terminal, partial]
+                    description: |
+                      Result classification for a successful (200) expansion:
+                      `complete` (usable, full history), `empty_terminal` (the
+                      provider reliably established there are no additional
+                      connections), or `partial` (usable but incomplete).
+                      A degraded/failed acquisition is NOT returned as 200 — it
+                      surfaces as `503 EXPAND_UNAVAILABLE` (retryable). Optional
+                      and additive; absent on older responses.
                   partial:
                     type: boolean
                     description: |
@@ -1696,6 +1713,12 @@ paths:
                   totalTxs:
                     type: integer
                     description: Reported total transaction count for the address (best-effort, may be 0 if unknown). Present only when `partial = true`.
+        '503':
+          description: |
+            `EXPAND_UNAVAILABLE` — the expansion could not be reliably
+            completed (provider timeout / rate-limit / degraded upstream, or a
+            partial with zero usable data). Retryable: the node is not marked
+            expanded and the result is not cached.
 
   /api/graph/csv-import:
     post:
@@ -2608,6 +2631,37 @@ components:
               type: [string, 'null']
               description: Normalized network string from the request, if any.
 
+    ExchangeDepositsValid:
+      type: object
+      description: >-
+        Valid exchange-deposit summary. Exchange-identity -> count only;
+        untrusted token symbols are never part of the breakdown keys. Legacy
+        valid objects omit `status`.
+      required: [totalDeposits, totalValue, exchangeBreakdown, flags]
+      properties:
+        totalDeposits: { type: integer, minimum: 0 }
+        totalValue: { type: string }
+        exchangeBreakdown:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+        exchangeAssetBreakdown:
+          type: array
+          items: { type: object }
+        flags:
+          type: array
+          items: { type: string }
+    ExchangeDepositsInvalidated:
+      type: object
+      description: >-
+        M2-C2 sentinel written when a persisted report's historical exchange
+        attribution can no longer be truthfully reconstructed from retained
+        data. Carries no totalDeposits/totalValue/exchangeBreakdown/flags — the
+        prior numeric attribution must not be retained as fact. Never produced
+        by live analysis.
+      required: [status, curation]
+      properties:
+        status: { type: string, enum: [historical_attribution_invalidated] }
+        curation: { type: string, minLength: 1, example: "M2-C2-2026-08-04" }
     AnalysisResult:
       type: object
       properties:
@@ -2867,7 +2921,35 @@ components:
                   severity: medium
                   description: "Address is active for ~22+ hours per day, suggesting automation."
         crossChain: { type: object, nullable: true }
-        exchangeDeposits: { type: object, nullable: true }
+        exchangeDeposits:
+          oneOf:
+            - $ref: '#/components/schemas/ExchangeDepositsValid'
+            - $ref: '#/components/schemas/ExchangeDepositsInvalidated'
+            - type: 'null'
+          description: >-
+            A valid exchange-deposit summary, an M2-C2
+            historical-attribution-invalidated sentinel (persisted reports only;
+            never produced by live analysis), or null. Legacy valid objects do
+            not carry a `status` field. Structurally distinguishable without a
+            discriminator: the invalidated variant has `status` + `curation` and
+            no numeric fields; the valid variant has the numeric fields.
+        destinationEntities:
+          type: array
+          description: >-
+            Per-transfer destination-entity evidence. Always an array: it is []
+            when unavailable, in sandbox, or when the report owner's current
+            effective plan is not entitled to destination_entity_evidence.
+            Internal dedup identifiers are never exposed.
+          items:
+            $ref: '#/components/schemas/DestinationEntityRecord'
+        destinationEntitySummary:
+          oneOf:
+            - $ref: '#/components/schemas/DestinationEntitySummary'
+            - type: 'null'
+          description: >-
+            Aggregate over detected destination entities, or null when
+            unavailable, in sandbox, or the owner's current effective plan is
+            not entitled.
         defiSwaps: { type: object, nullable: true }
         nftWashTrading: { type: object, nullable: true }
         osintIntelligence: { type: object, nullable: true }
@@ -2979,6 +3061,109 @@ components:
         startedAt:   { type: string, format: date-time, nullable: true }
         finishedAt:  { type: string, format: date-time, nullable: true }
 
+    DestinationEntityRecord:
+      type: object
+      description: >-
+        One direct single-hop OUTGOING transfer to a labelled destination
+        entity. Amounts are integer base units encoded as decimal strings.
+        Internal dedup identifiers and debug fields are never present.
+      properties:
+        displayLabel: { type: string }
+        entityName:
+          type: string
+          nullable: true
+          description: Structured entity name when available; otherwise null.
+        entityType:
+          type: string
+          enum:
+            - centralized_exchange
+            - vasp
+            - otc_desk
+            - custodian
+            - payment_processor
+            - fiat_on_off_ramp
+            - other_service
+        destinationAddress: { type: string }
+        transactionHash: { type: string }
+        timestamp: { type: integer }
+        network: { type: string }
+        direction: { type: string, enum: [outgoing] }
+        hopCount: { type: integer }
+        amountRaw:
+          type: string
+          description: >-
+            Integer base-unit amount as an exact decimal string (never a JSON
+            number — precision above 2**53 would be lost).
+        amountFormatted: { type: string }
+        asset: { type: string }
+        assetType: { type: string, enum: [native, token] }
+        assetAddress:
+          type: string
+          nullable: true
+          description: Token contract/mint; null for native assets.
+        assetDecimals: { type: integer }
+        labelSource: { type: string }
+        attributionBasis:
+          type: string
+          enum: [provenance_backed, manual_known_address, user_custom]
+        confidenceLevel:
+          type: string
+          nullable: true
+          enum: [high, medium, low, null]
+        attributionEvidenceType: { type: string, nullable: true }
+    DestinationEntityAssetTotal:
+      type: object
+      description: Per-asset total; native and token base units are never summed.
+      properties:
+        asset: { type: string }
+        assetType: { type: string, enum: [native, token] }
+        assetAddress: { type: string, nullable: true }
+        assetDecimals: { type: integer }
+        amountRaw:
+          type: string
+          description: Integer base-unit total as an exact decimal string.
+        amountFormatted: { type: string }
+        transferCount: { type: integer }
+    DestinationEntityHistoryDisclosure:
+      type: object
+      description: >-
+        Transaction-history completeness disclosure, derived only from scan-wide
+        completeness state. null/where-unknown values are honest.
+      properties:
+        complete: { type: boolean }
+        transactionHistoryComplete: { type: boolean }
+        tokenHistoryComplete:
+          type: boolean
+          nullable: true
+          description: true, false, or null when token transfers are not applicable.
+        transactionCoverage:
+          type: string
+          enum: [exact, approximate, subset_only, unknown]
+        transactionFetchIncomplete: { type: boolean }
+        tokenTransferSupported: { type: boolean }
+        tokenFlowIncomplete: { type: boolean }
+        analyzedTransactions: { type: integer }
+        totalTransactions: { type: integer, nullable: true }
+        completenessPct: { type: number, nullable: true }
+        partialReason: { type: string, nullable: true }
+        tokenPartialReason: { type: string, nullable: true }
+        windowDescription: { type: string }
+        note: { type: string }
+    DestinationEntitySummary:
+      type: object
+      description: Aggregate over detected destination entities.
+      properties:
+        assetTotals:
+          type: array
+          items:
+            $ref: '#/components/schemas/DestinationEntityAssetTotal'
+        totalDetected: { type: integer }
+        recordsReturned: { type: integer }
+        truncated: { type: boolean }
+        historyDisclosure:
+          oneOf:
+            - $ref: '#/components/schemas/DestinationEntityHistoryDisclosure'
+            - type: 'null'
     ContractAnalysis:
       type: object
       nullable: true

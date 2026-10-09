@@ -56,7 +56,7 @@ scroll, celo, cronos, moonbeam
 ```
 Plus: `bsc`, `tron`.
 
-**Not supported in sandbox graph (will return 422):** `btc`, `ltc`, `sol`, `ton`, `cosmos`, `cardano`, `xrp`, `linea`, `fantom`, `polygon_zkevm`. Paid `/api/graph/expand` adds `btc`, `ltc`, `sol`, `ton` (and re-includes `linea`, `fantom`, `polygon_zkevm` for paid traversal — only sandbox-side is currently disabled for those three). `cosmos`, `cardano`, `xrp` are not in any graph today; they only work in `/api/v1/check`. See `capability-matrix.md` for the per-endpoint network table.
+**Not supported in sandbox graph (will return 422 `NETWORK_NOT_SUPPORTED_IN_SANDBOX`):** `btc`, `ltc`, `sol`, `ton`, `cosmos`, `cardano`, `xrp`, `linea`, `fantom`, `polygon_zkevm`. Paid `/api/graph/expand` does handle `btc`, `ltc`, `sol`, `ton`, `linea`, `fantom` and `polygon_zkevm` (authority: `EVM_NETWORKS` (14) plus the dedicated `tron` / `btc` / `ltc` / `sol` / `ton` / `bsc` branches in `web/api/main.py::_get_counterparties`), but `cosmos`, `cardano` and `xrp` have no graph-expand handler on either tier and return **422** `NETWORK_ANALYSIS_NOT_AVAILABLE_FOR_ENDPOINT` on the paid endpoint. See `capability-matrix.md` for the per-endpoint sets and <https://app.onchainrisk.io/coverage> for per-network coverage depth.
 
 > `linea`, `fantom`, `polygon_zkevm` were removed from sandbox graph 2026-05-04 because the upstream analyzer returns 503 in production. They will be restored once the provider config is fixed.
 

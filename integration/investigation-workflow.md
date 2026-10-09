@@ -83,7 +83,7 @@ curl -X POST https://api.onchainrisk.io/api/v1/sandbox/graph/expand \
 
 `depth` is silently clamped to 1 — `_sandbox.truncated_fields.depth = "max_1"` is reported back if requested >1.
 
-**Supported networks (16):** `eth, arbitrum, optimism, base, polygon, avalanche, linea, zksync, scroll, celo, cronos, fantom, moonbeam, polygon_zkevm, bsc, tron`. Other networks return **422** `NETWORK_NOT_SUPPORTED_IN_SANDBOX`.
+**Supported networks (13):** `eth, arbitrum, optimism, base, polygon, avalanche, zksync, scroll, celo, cronos, moonbeam, bsc, tron` (source of truth: `SANDBOX_GRAPH_SUPPORTED_NETWORKS` in `web/api/src/config/sandbox-policy.js`). Every other network — including `linea`, `fantom` and `polygon_zkevm`, which were removed from the sandbox graph on 2026-05-04 after upstream 503s — returns **422** `NETWORK_NOT_SUPPORTED_IN_SANDBOX`.
 
 ### 3b. Paid graph — `POST /api/graph/expand`
 
@@ -101,7 +101,7 @@ curl -X POST https://api.onchainrisk.io/api/graph/expand \
 
 Returns up to 20 aggregated counterparty edges. Logged as a `graph_expand` action — does **not** count toward your monthly check quota. Plan-level rate limits still apply (see `capability-matrix.md`).
 
-**Supported networks (22):** all sandbox networks plus `btc, ltc, sol, ton, cosmos, cardano, xrp`.
+**Supported networks (20):** the 14 EVM networks plus `bsc`, `tron`, `btc`, `ltc`, `sol`, `ton` — i.e. the paid graph covers `linea`, `fantom` and `polygon_zkevm` (which the sandbox graph does not) and adds the non-EVM UTXO/account chains. Authority: `EVM_NETWORKS` (14) plus the dedicated `tron` / `btc` / `ltc` / `sol` / `ton` / `bsc` branches in `web/api/main.py::_get_counterparties`. The three remaining accepted networks — `xrp`, `cosmos`, `cardano` — have no graph-expand handler and return **422** `NETWORK_ANALYSIS_NOT_AVAILABLE_FOR_ENDPOINT`. A handler existing does not guarantee edges: per-network depth is upstream-dependent, and an upstream failure surfaces as **503** `EXPAND_UNAVAILABLE` rather than a silent empty graph.
 
 ---
 

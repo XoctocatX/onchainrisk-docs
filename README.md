@@ -1,6 +1,6 @@
 # OnChainRisk API
 
-**Blockchain analytics & wallet risk-scoring API** — score any crypto wallet 0–100, trace fund flows, and detect scam/exploit/mixer patterns across 23 networks.
+**Blockchain analytics & wallet risk-scoring API** — analyze wallet activity across 23 supported networks, with coverage and analysis depth varying by network and endpoint. Score wallets 0–100, trace fund flows, and detect scam/exploit/mixer patterns.
 
 - **API hub:** https://onchainrisk.io/blockchain-analytics-api/
 - **Platform:** https://onchainrisk.io
@@ -130,26 +130,37 @@ Full request/response detail, parameters, and every endpoint: **[OpenAPI spec](h
 - **Sandbox docs:** https://api.onchainrisk.io/sandbox-docs
 - **Postman (paid):** https://api.onchainrisk.io/postman-paid-collection.json
 - **Postman (sandbox):** https://api.onchainrisk.io/postman-sandbox-collection.json
+- **Postman environment (paid):** [paid.postman_environment.json](paid.postman_environment.json)
+- **Postman environment (sandbox):** [sandbox.postman_environment.json](sandbox.postman_environment.json)
+- **Webhooks integration guide:** [integration/webhooks.md](integration/webhooks.md)
+- **Live coverage matrix:** https://app.onchainrisk.io/coverage
 - **Get an API key:** https://app.onchainrisk.io/dashboard/api-keys
 
 ---
 
 ## What is OnChainRisk?
 
-OnChainRisk is a blockchain forensics platform that helps investigators, compliance teams, and individuals assess the risk of any crypto wallet address. It combines transaction analysis, pattern detection, entity labeling, and AI-powered investigation into a single tool — accessible at a fraction of the cost of enterprise solutions. Supports 23 blockchain networks including Ethereum, Bitcoin, Solana, and Layer 2 ecosystems.
+OnChainRisk is a blockchain forensics platform that helps investigators, compliance teams, and individuals assess the risk of any crypto wallet address. It combines transaction analysis, pattern detection, entity labeling, and AI-powered investigation into a single tool — accessible at a fraction of the cost of enterprise solutions. Supports a 23-network product set including Ethereum, Bitcoin, Solana, and Layer 2 ecosystems; coverage depth and endpoint availability vary by network — see the [live coverage matrix](https://app.onchainrisk.io/coverage).
 
 ## Key features
 
 - **Wallet risk scoring** — a 0–100 risk score from transaction patterns, counterparty risk, sanctions checks (where supported), and behavioral signals.
 - **Fund flow tracing** — interactive graph of fund movements; expand nodes and trace paths across multiple hops.
-- **Multi-chain wallet scan** — scan one address across 15 EVM networks with a composite score + per-network breakdown.
+- **Multi-chain analysis** — scan balances/holdings with `/api/v1/multichain/scan`, and run composite risk analysis with `/api/v1/multichain/analyze`. The two are distinct: `scan` returns holdings only and does not risk-score.
 - **AI investigation agent** — automated wallet analysis and fund tracing through natural-language conversation.
 - **Block MEV analysis** — sandwich attacks, arbitrage, flash loans, and ordering manipulation across 10 EVM networks.
 - **Token security scoring** — honeypot risk, buy/sell tax simulation, ownership concentration, and liquidity.
 - **Scam detection** — pig butchering, address poisoning, rug pulls, and mixer interactions.
-- **Court-ready reports** — export as PDF, CSV, XLSX, or Markdown with fund-flow diagrams and evidence chains.
+- **Court-ready export format** — export PDF, CSV, XLSX, or Markdown reports with fund-flow diagrams and evidence chains. "Court-ready" is the name of the export format; it is not a guarantee of legal admissibility, evidentiary weight, chain-of-custody certification, or expert attestation in any jurisdiction.
 
 ## Supported networks (23)
+
+> **What "supported" means here.** 23 is the product network set — the networks `POST /api/v1/check`
+> accepts at validation. Acceptance is not a statement of coverage depth: historical window and data
+> path vary by network, and the [live coverage matrix](https://app.onchainrisk.io/coverage) is the authoritative source for current
+> depth and rollout stage. Endpoint-specific support is narrower than 23 for several endpoints — deep
+> analysis 14, token check 10, block analyze 10, paid graph expand 20, sandbox graph 13 — with the exact
+> sets and error codes in [integration/capability-matrix.md](integration/capability-matrix.md).
 
 | Layer 1 | Layer 2 | Other |
 |---------|---------|-------|

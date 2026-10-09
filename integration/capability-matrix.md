@@ -2,9 +2,9 @@
 
 A reference of what is in production today versus what is roadmap. Use this when deciding which tier and endpoints to integrate against, and what to promise downstream consumers.
 
-Status as of **2026-05-20**.
+Status as of **2026-10-09**.
 
-> **Since the last update (2026-05-04):** `/api/v1/check/deep` capability surface is now a 14-network EVM set (see §3 below); `/api/v1/multichain/analyze` now applies user custom weights / overrides / labels (PR #76); the critical override floor surface expanded from 9 to 14 keys, aligned across Worker / Modal / Dashboard (PR #77 / PR #78); `/api/v1/token/check` re-enabled Tron support — token-check supported network count is now 10.
+> **Since the last update (2026-05-20):** per-network status is no longer frozen into this file. Network *coverage* is now read from the operator-maintained live coverage matrix at <https://app.onchainrisk.io/coverage>, which is updated daily and carries a `stage` per chain. (That page is the public authority; the feed behind it is internal and is not part of the public API contract.) The former per-network status line (a frozen count of networks asserted as fully verified) has been removed: it came from a one-off 2026-05-04 functional audit and was materially more generous than the coverage stages the product now publishes to users. Endpoint-specific network sets below were re-verified against code on 2026-10-09 and are unchanged (deep 14 / token 10 / block 10 / sandbox graph 13).
 
 ---
 
@@ -15,7 +15,7 @@ Status as of **2026-05-20**.
 | `POST /api/v1/check` (address risk score) | ✅ | ✅ | Sandbox responses gate paid-only fields. See "Field gating" below. |
 | `POST /api/v1/check/deep` (deep analysis) | ❌ | ✅ | Paid only. 14 EVM networks supported (see §3). Saved custom weights/overrides/labels do **not** apply to deep — the response carries `peelChain` only (no `riskScore`). Unsupported networks return `422 DEEP_ANALYSIS_UNSUPPORTED_NETWORK`. |
 | `POST /api/graph/expand` (paid graph, 1-hop) | ❌ | ✅ | Paid graph traversal. Up to 20 counterparties per call. |
-| `POST /api/v1/sandbox/graph/expand` (preview) | ✅ | ✅ | Both key types route to the sandbox profile. Limited to 7d / 20 nodes / 30 edges / 16 networks. |
+| `POST /api/v1/sandbox/graph/expand` (preview) | ✅ | ✅ | Both key types route to the sandbox profile. Limited to 7d / 20 nodes / 30 edges / 13 networks. |
 | Watchlist + alerts (`/api/watchlist`, `/api/alerts`) | ❌ | ✅ | Paid only. ~5-min cron cadence. |
 | Webhooks (`/api/notifications/settings`) | ❌ | ✅ | HMAC SHA-256 signed (`X-Signature-256`). Single attempt per alert today (retries roadmap). |
 | Reports persistence (`/api/reports`) | ❌ | ✅ | Sandbox is stateless; no rows written. |
@@ -25,7 +25,7 @@ Status as of **2026-05-20**.
 | Investigations (`/api/investigate*`, AI-assisted) | ❌ | ✅ | Paid only. |
 | Custom labels (`/api/labels`, `/api/labels/import`, `/api/labels/export`) | Read-only (`GET /api/labels`) | ✅ Full CRUD + CSV | Sandbox can read but not mutate. |
 | Entity clustering (`clusters` field on `/api/v1/check`) | ❌ (gated null) | ✅ | Production. Populated when target has labeled counterparties grouped into ≥2-member entities. May be `[]` for fresh wallets. |
-| Cross-chain bridge detection (`crossChain` field) | ❌ (gated null) | ✅ | Production. 13 destination chains including Monero (flagged not-trackable). Coverage = curated bridge contract registry. |
+| Cross-chain bridge detection (`crossChain` field) | ❌ (gated null) | ✅ | Production. 13 destination chains including Monero (flagged not-trackable) — `DestinationChain` enum in `ethforensics/analysis/crosschain.py`. Coverage = curated registry of 13 bridge contracts. |
 
 ---
 
@@ -48,14 +48,16 @@ Authoritative list at runtime: `_sandbox.gated_fields[]` and `_sandbox.truncated
 
 > **Network coverage at a glance** (network *enum* differs from network *production-verified* coverage; both listed below):
 >
-> - `POST /api/v1/check` — **enum: 23 networks** accepted by validation. **Production-verified full analysis: 18 networks today** (eth, bsc, arbitrum, optimism, base, polygon, avalanche, linea, zksync, scroll, celo, cronos, moonbeam, btc, ltc, sol, ton, tron). **Currently unstable / partial in full analysis: `fantom`, `polygon_zkevm`, `cosmos`, `cardano`, `xrp`** — accepted by validation but full pipeline may return 503 from upstream analyzer. Tracked in audit #46 (P1-A).
-> - `POST /api/graph/expand` (paid graph) — **20 networks** (subset; `cosmos`, `cardano`, `xrp` excluded from graph traversal entirely; `fantom` and `polygon_zkevm` traversal works in current testing but may timeout on hot contracts).
+> - `POST /api/v1/check` — **23 networks accepted by validation** (`VALID_NETWORKS`, `web/api/src/routes/check.js`). Acceptance is NOT a coverage claim: per-network coverage depth and stage live in the coverage matrix and vary by chain. Snapshot as of **2026-10-09** — `ga`: `arbitrum`, `tron`; `rollout`: `eth`, `bsc`, `btc`; `preview`: the remaining 18. Treat the live matrix as authoritative; this snapshot can lag it by design.
+> - `POST /api/graph/expand` (paid graph) — **20 networks have a graph-expand handler.** There is no Worker-level allowlist (the Worker forwards the 23-network validation set); the authority is Modal-side: `EVM_NETWORKS` (14) plus the dedicated `tron` / `btc` / `ltc` / `sol` / `ton` / `bsc` branches in `web/api/main.py::_get_counterparties`. The remaining three — `xrp`, `cosmos`, `cardano` — are recognized networks with no handler and return **422** `NETWORK_ANALYSIS_NOT_AVAILABLE_FOR_ENDPOINT` (20 + 3 = the 23 accepted). Pinned by `tests/test_non_evm_routing.py`. Handler coverage is not a promise of edges: traversal depth and success remain upstream-dependent per network — see the coverage matrix.
 > - `POST /api/v1/sandbox/graph/expand` — **13 networks** (eth, arbitrum, optimism, base, polygon, avalanche, zksync, scroll, celo, cronos, moonbeam, bsc, tron). `linea`, `fantom`, `polygon_zkevm` removed from supported set 2026-05-04 (upstream 503 in production); these now return 422 `NETWORK_NOT_SUPPORTED_IN_SANDBOX`, restored once the provider config is fixed.
 > - `POST /api/v1/check/deep` — **14 EVM networks** (eth, arbitrum, optimism, base, polygon, avalanche, linea, zksync, scroll, celo, cronos, fantom, moonbeam, polygon_zkevm). Non-EVM (btc, ltc, sol, ton, tron, cosmos, cardano, xrp) and any unlisted network return `422 DEEP_ANALYSIS_UNSUPPORTED_NETWORK` at the Worker boundary. Source-of-truth: `web/api/src/capabilities/deep-analysis.js`.
 > - `POST /api/v1/token/check` — **10 networks** (eth, bsc, arbitrum, optimism, base, polygon, avalanche, linea, zksync, tron). Other networks return 422 `NETWORK_NOT_SUPPORTED_FOR_TOKEN_CHECK`. Tron was re-enabled 2026-05-18 (F-002b-2).
 > - `POST /api/v1/block/analyze` — **10 networks** (eth, arbitrum, optimism, avalanche, scroll, linea, zksync, bsc, polygon, base). All 10 EVM block-analyze networks supported. `bsc` and `polygon` were re-enabled 2026-05-05 (Phase 2b) after the PoA / extended-extraData middleware fix in Modal RPCClient. `base` was re-enabled 2026-05-05 (Phase 2c) after the Modal BASE_RPC_URL secret was rotated to `https://mainnet.base.org`. Future-block requests (block number ahead of chain tip) return **404 `BLOCK_NOT_FOUND`** with the upstream's chain-tip number in the message; other upstream 4xx surface as 422 with the upstream reason; generic upstream failures stay 503.
 >
-> "Production-verified" = end-to-end success in our 2026-05-04 audit. "Enum" = networks the API will accept and forward to upstream. We don't refuse a request silently; we either succeed or return a specific 422/503 with structured error code.
+> **Reading these numbers.** "Accepted by validation" = the network the API will take and forward upstream; it is a *request-admission* fact with a code source-of-truth, not a promise about data depth. "Coverage stage" (`ga` / `rollout` / `preview` / `degraded`) is the operator-maintained statement about data path and historical window for that chain, published at <https://app.onchainrisk.io/coverage>. The endpoint-specific sets (deep / token / block / sandbox graph) are hard Worker-side gates: an unlisted network returns a specific `422` at the boundary. We never refuse silently — a request either succeeds or returns a structured `422`/`503`.
+>
+> Current coverage wording, as published by the matrix itself (reuse this phrasing rather than inventing new claims): *"OnChainRisk's multi-chain coverage is in active rollout. During this period, coverage windows and historical depth may vary by chain — see the per-chain coverage matrix for current status. Reports reflect data available at the time of the scan against the current production data path for each network. Full historical completeness across all supported networks is not yet guaranteed."*
 
 ### Paid graph — `POST /api/graph/expand`
 
@@ -127,12 +129,17 @@ Overage is handled by **prepaid credits** (`/api/billing/credits/buy`). 1 credit
 
 ## 6. Production vs roadmap
 
-### Production today (2026-05-04)
+### Production today
+
+> Dated by this file's status line (**2026-10-09**), not by a second embedded date. The
+> previous "(2026-05-04)" heading had drifted into claiming a four-month-old audit was
+> "today". Per-endpoint network sets are NOT restated here — §3 is their single home, so
+> the two sections cannot disagree again.
 - All endpoints listed in `web/openapi.yaml` and `web/openapi-sandbox.yaml`.
 - Sandbox graph preview (`/api/v1/sandbox/graph/expand`).
 - Webhook delivery with HMAC SHA-256 signing.
-- 22-network paid graph expansion (1-hop).
-- Cross-chain bridge detection across 13 destination chains.
+- Paid graph expansion (1-hop) with handlers for **20 networks** — see §3 for the set and for the three accepted networks that return 422 instead.
+- Cross-chain bridge detection across **13 destination chains** (source of truth: the `DestinationChain` enum in `ethforensics/analysis/crosschain.py` — 13 real chains plus an `unknown` sentinel), via a curated registry of 13 bridge contracts.
 - Entity clustering on paid `/api/v1/check`.
 - Async path for heavy EVM scans (auto-routed via `/api/analyze/estimate`, polled via `/api/v1/check/status/{reportId}`).
 
