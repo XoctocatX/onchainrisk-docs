@@ -866,6 +866,13 @@ components:
           items: { $ref: '#/components/schemas/TokenTransfer' }
           description: Always `[]` in sandbox responses.
           x-ocr-sandbox-always-empty: true
+        destinationEntities:
+          type: array
+          items: { type: object }
+          description: >-
+            Always `[]` in sandbox responses. Raw destination-entity evidence is
+            a paid, plan-entitled feature (destination_entity_evidence).
+          x-ocr-sandbox-always-empty: true
 
         # Gated objects - always null in sandbox
         crossChain:
@@ -891,6 +898,12 @@ components:
         exchangeDeposits:
           type: [object, 'null']
           description: Always `null` in sandbox.
+          x-ocr-sandbox-always-null: true
+        destinationEntitySummary:
+          type: [object, 'null']
+          description: >-
+            Always `null` in sandbox. The destination-entity summary is a paid,
+            plan-entitled feature (destination_entity_evidence).
           x-ocr-sandbox-always-null: true
         osintIntelligence:
           type: [object, 'null']
