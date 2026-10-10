@@ -76,7 +76,7 @@ info:
     A client can detect sandbox mode two ways:
 
     1. Response contains a `_sandbox` root object with `profile: "sandbox"`
-    2. `GET /api/user/me` returns `key_type: "sandbox"` and `api_mode: "sandbox"`
+    2. `GET /api/v1/usage` returns `key_type: "sandbox"`
 
     No other fields are overloaded with sandbox semantics - `plan`, `riskLevel`,
     `riskConfidence`, `dataQuality` and other enums keep their existing paid
@@ -134,7 +134,7 @@ tags:
       last 7 days, capped nodes/edges. Upgrade for full historical graph
       expansion via paid `/api/graph/expand`.
   - name: Account
-    description: Current user profile and usage
+    description: Quota and rate-limit introspection for the authenticated key
 
 security:
   - ApiKeyAuth: []
@@ -165,6 +165,13 @@ paths:
                   example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
                 network:
                   type: string
+                  description: |
+                    Omit to auto-detect from the address format. The accepted set is the
+                    same one the paid contract documents — sandbox narrows what is
+                    *computed*, not which networks validate.
+                  enum: [eth, bsc, tron, btc, ltc, sol, ton, arbitrum, optimism, base,
+                         polygon, avalanche, linea, zksync, scroll, celo, cronos, fantom,
+                         moonbeam, polygon_zkevm, cosmos, cardano, xrp]
                   example: "eth"
       responses:
         '200':
@@ -290,36 +297,64 @@ paths:
   # internal preflight; direct external calls would 404. Intentionally
   # omitted from this spec.
 
-  /api/user/me:
-    get:
-      operationId: sandboxGetMe
-      tags: [Account]
-      summary: Current user profile (with sandbox markers)
-      responses:
-        '200':
-          description: User profile
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserMeSandbox'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
-  /api/user/usage:
+  /api/v1/usage:
     get:
       operationId: sandboxGetUsage
       tags: [Account]
-      summary: Current usage and limit status
+      summary: Current quota and rate limit for this key
       description: |
-        Returns current period usage against plan limit plus available credits.
-        Free tier returns rolling-daily window; paid tiers return monthly.
+        Quota introspection for the authenticated key. This is the supported public
+        surface for checking how much of your allowance is left before you schedule
+        work — sandbox keys are accepted here (`key_type: "sandbox"`) even though they
+        cannot call the paid compute endpoints.
+
+        `plan_quota` is the recurring plan allowance; the free tier it uses is a
+        rolling 24-hour window, so `billing_period.start` and `.end` are `null`.
+        `purchased_credits.available` is a separate balance. The same endpoint is in
+        the paid contract and returns the same shape.
       responses:
         '200':
-          description: Usage info
+          description: Current quota state
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UsageInfo'
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    required: [plan, key_type, billing_period, plan_quota, purchased_credits, rate_limit]
+                    properties:
+                      plan: { type: string, example: free }
+                      key_type:
+                        type: [string, 'null']
+                        enum: [paid, sandbox, null]
+                        description: '`sandbox` for a sandbox key. `null` only for session auth.'
+                        example: sandbox
+                      billing_period:
+                        type: object
+                        required: [type, start, end]
+                        properties:
+                          type: { type: string, enum: [monthly, rolling_24h, none], example: rolling_24h }
+                          start: { type: [string, 'null'], format: date-time }
+                          end: { type: [string, 'null'], format: date-time }
+                      plan_quota:
+                        type: object
+                        required: [used, limit, remaining]
+                        properties:
+                          used: { type: integer, example: 3 }
+                          limit: { type: [integer, 'null'], example: 10 }
+                          remaining: { type: [integer, 'null'], example: 7 }
+                      purchased_credits:
+                        type: object
+                        required: [available]
+                        properties:
+                          available: { type: integer, example: 0 }
+                      rate_limit:
+                        type: object
+                        required: [requests_per_second]
+                        properties:
+                          requests_per_second: { type: integer, example: 1 }
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -749,13 +784,11 @@ components:
           description: Current English display fallback. May include dynamic values. Do not use as translation key.
           example: "BULK COLLECTION pattern: 24 inbound TXs in 600s"
         severity:
-          type: string
-          enum: [critical, high, medium, low]
-          nullable: true
+          type: [string, 'null']
+          enum: [critical, high, medium, low, null]
           example: medium
         description:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: Short stable English explanation of the flag meaning.
           example: "Many sources sent funds within a short window (bulk collection)."
 
@@ -1126,55 +1159,3 @@ components:
             `historicalTraversal`, `aiSummary`.
         upgrade_url: { type: string, format: uri }
         docs_url: { type: string, format: uri }
-
-    UserMeSandbox:
-      type: object
-      description: |
-        User profile returned when the request used a sandbox API key. The
-        `plan` field stays as the real subscription tier (billing truth);
-        `key_type` and `api_mode` are the sandbox signal.
-      properties:
-        id: { type: integer }
-        email: { type: string, format: email }
-        plan:
-          type: string
-          enum: [free, pro, business, enterprise]
-          description: Real subscription plan. Never overridden to "sandbox".
-        key_type:
-          type: string
-          enum: [sandbox]
-          description: Present only when request used a sandbox API key.
-        api_mode:
-          type: string
-          enum: [sandbox]
-          description: Effective access mode for this request.
-
-    UsageInfo:
-      type: object
-      description: |
-        Usage counters for the authenticated user. Free tier returns a rolling
-        24-hour window; paid tiers return a monthly window. Reset fields are
-        omitted for free tier because a rolling window has no fixed reset.
-      properties:
-        plan:
-          type: string
-          enum: [free, pro, business, enterprise]
-        period:
-          type: string
-          enum: [daily, monthly]
-        queriesUsed: { type: integer }
-        queriesLimit: { type: integer }
-        queriesRemaining: { type: integer }
-        credits:
-          type: integer
-          description: Purchased overflow credits available.
-        periodStart:
-          type: [string, 'null']
-          format: date-time
-          description: Not returned for free tier (rolling window).
-        periodEnd:
-          type: [string, 'null']
-          format: date-time
-        resetsAt:
-          type: [string, 'null']
-          format: date-time

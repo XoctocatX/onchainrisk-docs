@@ -114,8 +114,8 @@ Risk signals surface in `patternFlags` (human-readable, e.g. `"OFAC/sanctions li
 
 ## Auth, quota & errors
 
-- **Auth:** every request needs `Authorization: Bearer <API key>`. Create/rotate keys at https://app.onchainrisk.io/dashboard/api-keys — **sandbox keys** (`ocr_test_`, free-tier) for integration testing, **paid keys** for production / full checks.
-- **Quota:** in production, a fresh `POST /api/v1/check` costs **1 check**; `GET /api/v1/check/{address}` returns cache for free (add `?force=true` to force a fresh check). Responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-Credits-Remaining` headers.
+- **Auth:** analysis and account-scoped operations need `Authorization: Bearer <API key>`. Create/rotate keys at https://app.onchainrisk.io/dashboard/api-keys — **sandbox keys** (`ocr_test_`, free-tier) for integration testing, **paid keys** for production / full checks. The public share-link endpoints are the documented exception: they take no credential, because the share token itself is the credential — see the OpenAPI spec for which operations those are.
+- **Quota:** in production, a fresh `POST /api/v1/check` costs **1 check**; `GET /api/v1/check/{address}` returns a cached report for free and never triggers a new analysis — call `POST /api/v1/check` when you want the address analysed again. Responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-Credits-Remaining` headers.
 - **Errors:** `401` unauthorized (missing/invalid key), `429` quota or rate limit exceeded, `404` not found.
 
 Full request/response detail, parameters, and every endpoint: **[OpenAPI spec](https://api.onchainrisk.io/openapi.yaml)** · **[API reference](https://api.onchainrisk.io/docs)**.
