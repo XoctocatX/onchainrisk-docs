@@ -22,7 +22,7 @@ Status as of **2026-10-09**.
 | Multichain scan (`/api/v1/multichain/*`) | ❌ | ✅ | Paid only. `/api/v1/multichain/analyze` honors saved custom weights / overrides / labels (same surface as `/api/v1/check`) since 2026-05-20 (PR #76). `/api/v1/multichain/scan` is balance/holdings only — no risk scoring, so customs do not apply there. |
 | Token security check (`/api/v1/token/check`) | ❌ | ✅ | Paid only. |
 | Block analysis (`/api/v1/block/*`) | ❌ | ✅ | Paid only. |
-| MEV aggregation (`/api/v1/mev/*`) | ❌ | ❌ | **Not a customer API.** Every `/api/v1/mev/*` route requires an admin session (`requireAdmin`), and the manual scan trigger is additionally frozen (`403 MEV_SCAN_DISABLED`). Removed from the public spec and Postman in #729 — it had been published under `apiKeyAuth`, which no paid key could ever satisfy. |
+| MEV aggregation administration | ❌ | ❌ | Internal operational surface; not part of the customer API. |
 | Investigations (`/api/investigate*`, AI-assisted) | ❌ | ✅ | Paid only. |
 | Custom labels (`/api/labels`, `/api/labels/import`, `/api/labels/export`) | Read-only (`GET /api/labels`) | ✅ Full CRUD + CSV | Sandbox can read but not mutate. |
 | Entity clustering (`clusters` field on `/api/v1/check`) | ❌ (gated null) | ✅ | Production. Populated when target has labeled counterparties grouped into ≥2-member entities. May be `[]` for fresh wallets. |
