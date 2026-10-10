@@ -755,6 +755,19 @@ paths:
   #   learning loop; not part of the public integration API.
   # - /api/admin/* — internal surface
   # - /api/notifications/telegram/callback — Telegram server-to-server webhook
+  #
+  # Removed in #729 after a route-by-route auth audit. Each had been published under
+  # `apiKeyAuth` while its runtime handler rejects API keys, so the documented call could
+  # never have worked:
+  # - /api/v1/mev/bots, /api/v1/mev/stats, /api/v1/mev/scan/trigger — every /api/v1/mev/*
+  #   handler calls requireAdmin(); the manual trigger is additionally frozen and returns
+  #   403 MEV_SCAN_DISABLED even for an authorized admin. /api/v1/mev/pool/{address} is
+  #   admin-only too and was never published. MEV remains an internal/admin feature.
+  # - /api/keys, /api/keys/{id} — listApiKeys/createApiKey/revokeApiKey call
+  #   requireSessionAuth(): an API key cannot mint or revoke API keys. Key management is
+  #   dashboard-only by design.
+  # `npm run validate:public-api-auth` now derives this invariant from runtime source and
+  # fails CI if an admin/session-gated route re-enters this document.
 
   # ── Multi-Chain ───────────────────────────────────────
   /api/v1/multichain/scan:
@@ -1240,56 +1253,6 @@ paths:
           description: Watchlist item created
 
   # ── API Keys ──────────────────────────────────────────
-  /api/keys:
-    get:
-      tags: [API Keys]
-      summary: List API keys
-      security:
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: API keys (prefix only, not full key)
-    post:
-      tags: [API Keys]
-      summary: Create API key
-      description: Returns the full key only once. Store it securely.
-      security:
-        - apiKeyAuth: []
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                name: { type: string, default: "API Key" }
-      responses:
-        '200':
-          description: New API key
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id: { type: integer }
-                  key: { type: string, example: "ocr_live_abc123..." }
-                  prefix: { type: string }
-
-  /api/keys/{id}:
-    delete:
-      tags: [API Keys]
-      summary: Revoke API key
-      security:
-        - apiKeyAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer }
-      responses:
-        '200':
-          description: Key revoked
-
-  # ── Labels ────────────────────────────────────────────
   /api/labels:
     get:
       tags: [Labels]
@@ -1964,92 +1927,6 @@ paths:
           description: Report not found or not owned by the caller
 
   # ── MEV ───────────────────────────────────────────────
-  /api/v1/mev/bots:
-    get:
-      tags: [MEV]
-      summary: List known MEV bots and their recent stats
-      security:
-        - apiKeyAuth: []
-      parameters:
-        - name: network
-          in: query
-          schema: { type: string, default: eth }
-        - name: limit
-          in: query
-          schema: { type: integer, default: 50, maximum: 200 }
-      responses:
-        '200':
-          description: MEV bot list
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    address: { type: string }
-                    network: { type: string }
-                    label: { type: [string, 'null'] }
-                    sandwiches_7d: { type: integer }
-                    profit_usd_7d: { type: number }
-
-  /api/v1/mev/stats:
-    get:
-      tags: [MEV]
-      summary: Aggregate MEV statistics
-      security:
-        - apiKeyAuth: []
-      parameters:
-        - name: network
-          in: query
-          schema: { type: string }
-        - name: period
-          in: query
-          schema: { type: string, enum: [24h, 7d, 30d], default: 7d }
-      responses:
-        '200':
-          description: Aggregate stats
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  network: { type: string }
-                  period: { type: string }
-                  totalSandwiches: { type: integer }
-                  totalArbitrage: { type: integer }
-                  totalFlashLoans: { type: integer }
-                  extractedUsd: { type: number }
-
-  /api/v1/mev/scan/trigger:
-    post:
-      tags: [MEV]
-      summary: Trigger manual MEV scan for a network
-      description: Kicks off the MEV aggregation cron job on demand. Rate-limited.
-      security:
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [network]
-              properties:
-                network: { type: string }
-      responses:
-        '202':
-          description: Scan queued
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  jobId: { type: string }
-                  status: { type: string, enum: [queued] }
-        '429': { description: Rate-limited }
-
-  # ── AI Investigation (extra) ──────────────────────────
   /api/investigations/{id}:
     get:
       tags: [AI Investigation]
@@ -2066,11 +1943,14 @@ paths:
           description: Full investigation with messages and tool calls
         '404': { description: Not found }
 
-  /api/investigations/{id}/archive:
-    post:
+    delete:
       tags: [AI Investigation]
       summary: Archive investigation
-      description: Soft-delete. Hides from default list but preserves data.
+      description: >-
+        Soft-delete. Hides the investigation from the default list but preserves its data.
+        #729: previously published as `POST /api/investigations/{id}/archive`, which has no
+        runtime route. Archiving has always been DELETE on the resource — the shape the
+        dashboard calls.
       security:
         - apiKeyAuth: []
       parameters:
@@ -2082,7 +1962,6 @@ paths:
         '200': { description: Archived }
         '404': { description: Not found }
 
-  # ── Support ───────────────────────────────────────────
   /api/support/tickets:
     post:
       tags: [Support]
