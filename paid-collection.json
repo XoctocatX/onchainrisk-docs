@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "onchainrisk-paid-v3",
     "name": "OnChainRisk Paid API",
-    "description": "Full OnChainRisk API for Pro, Business, and Enterprise plans.\n\n**Setup:**\n1. Sign up at https://onchainrisk.io/register and upgrade to Pro or higher\n2. Dashboard \u2192 API Keys \u2192 Create a paid API key\n3. Set env var `paid_api_key` to your key\n4. Open any folder below \u2014 the top ones (Account \u2192 Analysis \u2192 ... \u2192 Labels) are safe to explore; the bottom ones (\u26a0 Advanced, \u26a0 Destructive) need extra caution.\n\n**Authentication:** every request uses the same header: `Authorization: Bearer {{paid_api_key}}`. No JWT, no CAPTCHA, no separate flow for different endpoint groups.\n\n**Scope:** mirrors https://api.onchainrisk.io/docs for everything an external integrator can call with a paid API key. Signup / login / password reset / 2FA are intentionally not in this collection \u2014 they run in the dashboard UI (Turnstile CAPTCHA, JWT session) and are not part of the programmatic integration surface.\n\n**Folder conventions:**\n- `Account` \u2192 `Labels` \u2014 safe day-to-day paid API onboarding.\n- `\u26a0 Advanced` \u2014 billing operations, MEV scan trigger, settings resets. Not destructive, but requires intent.\n- `\u26a0 Destructive` \u2014 every DELETE and account deletion. Running any of these removes data.\n\nA CI coverage script (`validate:paid-coverage`) ensures no core endpoint drifts out of sync with the Swagger spec.",
+    "description": "Full OnChainRisk API for Pro, Business, and Enterprise plans.\n\n**Setup:**\n1. Sign up at https://onchainrisk.io/register and upgrade to Pro or higher\n2. Dashboard → API Keys → Create a paid API key\n3. Set env var `paid_api_key` to your key\n4. Open any folder below — the top ones (Account → Analysis → ... → Labels) are safe to explore; the bottom ones (⚠ Advanced, ⚠ Destructive) need extra caution.\n\n**Authentication:** every request uses the same header: `Authorization: Bearer {{paid_api_key}}`. No JWT, no CAPTCHA, no separate flow for different endpoint groups.\n\n**Scope:** mirrors https://api.onchainrisk.io/docs for everything an external integrator can call with a paid API key. Signup / login / password reset / 2FA are intentionally not in this collection — they run in the dashboard UI (Turnstile CAPTCHA, JWT session) and are not part of the programmatic integration surface.\n\n**Folder conventions:**\n- `Account` → `Labels` — safe day-to-day paid API onboarding.\n- `⚠ Advanced` — billing operations, MEV scan trigger, settings resets. Not destructive, but requires intent.\n- `⚠ Destructive` — every DELETE and account deletion. Running any of these removes data.\n\nA CI coverage script (`validate:paid-coverage`) ensures no core endpoint drifts out of sync with the Swagger spec.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -21,7 +21,7 @@
       "key": "sample_address",
       "value": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
       "type": "string",
-      "description": "Vitalik \u2014 real data, explorable."
+      "description": "Vitalik — real data, explorable."
     },
     {
       "key": "user_address",
@@ -32,7 +32,7 @@
       "key": "sample_token_address",
       "value": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
       "type": "string",
-      "description": "USDC on Ethereum \u2014 safe honeypot/security test subject."
+      "description": "USDC on Ethereum — safe honeypot/security test subject."
     },
     {
       "key": "sample_block",
@@ -80,22 +80,10 @@
       "description": "Auto-populated from GET /api/investigations (first item). Or run POST /api/investigate first."
     },
     {
-      "key": "sample_key_id",
-      "value": "REPLACE_AFTER_KEY_LIST",
-      "type": "string",
-      "description": "Set manually to an API-key id you own. (Key management is dashboard/session-only and is deliberately not part of the public API surface \u2014 see #729.)"
-    },
-    {
-      "key": "sample_ticket_id",
-      "value": "REPLACE_AFTER_TICKET_CREATE",
-      "type": "string",
-      "description": "Auto-populated when you run POST /api/support/tickets. Source: response.data.id."
-    },
-    {
       "key": "sample_payment_id",
       "value": "REPLACE_AFTER_UPGRADE",
       "type": "string",
-      "description": "Reserved. Billing flows are dashboard-only \u2014 not exposed in this collection."
+      "description": "Reserved. Billing flows are dashboard-only — not exposed in this collection."
     }
   ],
   "item": [
@@ -103,7 +91,7 @@
       "name": "Analysis",
       "item": [
         {
-          "name": "POST /api/v1/check \u2014 address risk analysis",
+          "name": "POST /api/v1/check — address risk analysis",
           "request": {
             "method": "POST",
             "header": [
@@ -131,7 +119,7 @@
                 "check"
               ]
             },
-            "description": "\n\n## Localization metadata (added 2026-04-29)\n\nIn addition to the legacy `patternFlags: string[]` and `timing.botFlags: string[]`,\nthe response now includes:\n\n- `patternFlagDetails: FlagDetail[]` (top-level, index-aligned with `patternFlags`)\n- `timing.botFlagDetails: FlagDetail[]` (inside `timing`, index-aligned with `timing.botFlags`)\n\nEach FlagDetail:\n```json\n{\n  \"code\": \"bulk_collection\",\n  \"templateKey\": \"pattern.bulk_collection\",\n  \"defaultEn\": \"BULK COLLECTION pattern: 24 inbound TXs in 600s\",\n  \"severity\": \"medium\",\n  \"description\": \"Many sources sent funds within a short window (bulk collection).\"\n}\n```\n\nUse `code` / `templateKey` for translation/mapping. `defaultEn` is a display\nfallback only (may include dynamic values; not a stable translation key).\n\nBot flag example (inside `timing.botFlagDetails[i]`):\n```json\n{\n  \"code\": \"always_on_24h\",\n  \"templateKey\": \"bot.always_on_24h\",\n  \"defaultEn\": \"Active across 22+ hours daily \u2014 likely automated\",\n  \"severity\": \"medium\",\n  \"description\": \"Address is active for ~22+ hours per day, suggesting automation.\"\n}\n```\n\nUnknown / unmapped flags fall back to `code: \"unknown\"` with namespaced\n`templateKey` (`pattern.unknown` or `bot.unknown`); `severity` and\n`description` are `null` in that case. Legacy fields (`patternFlags`,\n`timing.botFlags`) remain unchanged for backward compatibility.\n"
+            "description": "\n\n## Localization metadata (added 2026-04-29)\n\nIn addition to the legacy `patternFlags: string[]` and `timing.botFlags: string[]`,\nthe response now includes:\n\n- `patternFlagDetails: FlagDetail[]` (top-level, index-aligned with `patternFlags`)\n- `timing.botFlagDetails: FlagDetail[]` (inside `timing`, index-aligned with `timing.botFlags`)\n\nEach FlagDetail:\n```json\n{\n  \"code\": \"bulk_collection\",\n  \"templateKey\": \"pattern.bulk_collection\",\n  \"defaultEn\": \"BULK COLLECTION pattern: 24 inbound TXs in 600s\",\n  \"severity\": \"medium\",\n  \"description\": \"Many sources sent funds within a short window (bulk collection).\"\n}\n```\n\nUse `code` / `templateKey` for translation/mapping. `defaultEn` is a display\nfallback only (may include dynamic values; not a stable translation key).\n\nBot flag example (inside `timing.botFlagDetails[i]`):\n```json\n{\n  \"code\": \"always_on_24h\",\n  \"templateKey\": \"bot.always_on_24h\",\n  \"defaultEn\": \"Active across 22+ hours daily — likely automated\",\n  \"severity\": \"medium\",\n  \"description\": \"Address is active for ~22+ hours per day, suggesting automation.\"\n}\n```\n\nUnknown / unmapped flags fall back to `code: \"unknown\"` with namespaced\n`templateKey` (`pattern.unknown` or `bot.unknown`); `severity` and\n`description` are `null` in that case. Legacy fields (`patternFlags`,\n`timing.botFlags`) remain unchanged for backward compatibility.\n"
           },
           "event": [
             {
@@ -161,7 +149,7 @@
                   "// Stable validation envelope: validation errors always 422 with",
                   "// success:false + error.code=VALIDATION_ERROR + details.errorCode.",
                   "// Added 2026-04-24 after the Tron/network mismatch incident.",
-                  "// (Ref: docs/testing/fixtures/validation/*.json \u2014 same shape.)",
+                  "// (Ref: docs/testing/fixtures/validation/*.json — same shape.)",
                   "pm.test('validation envelope is stable (422)', function () {",
                   "    if (pm.response.code !== 422) return;",
                   "    const body = pm.response.json();",
@@ -600,7 +588,7 @@
               "body": "{\n  \"success\": true,\n  \"data\": {\n    \"reportId\": \"6c4f29d4-2b1e-4d2c-8b77-c8e1b9a40124\",\n    \"status\": \"complete\",\n    \"address\": \"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\n    \"network\": \"eth\",\n    \"riskScore\": 5,\n    \"riskLevel\": \"low\",\n    \"createdAt\": \"2026-04-25T10:15:00Z\",\n    \"addressInfo\": {\n      \"type\": \"smart_contract\",\n      \"balance\": \"0 ETH\",\n      \"txCount\": 412,\n      \"firstSeen\": \"2020-06-09T18:43:35Z\",\n      \"lastSeen\": \"2026-04-25T10:11:02Z\"\n    },\n    \"patternFlags\": [],\n    \"contractAnalysis\": {\n      \"contractName\": \"FiatTokenV2_2\",\n      \"bytecodeSize\": 24576,\n      \"compilerVersion\": \"v0.6.12+commit.27d51765\",\n      \"deployer\": \"0x95Ba4cF87D6723ad9C0Db21737D862bE80e93911\",\n      \"isVerified\": true,\n      \"hasSelfdestruct\": false,\n      \"hasDelegatecall\": true,\n      \"hasCreate2\": false,\n      \"similarityFlags\": [\"ERC20\", \"Upgradeable\"],\n      \"knownSignatures\": [\"transfer(address,uint256)\", \"approve(address,uint256)\", \"balanceOf(address)\"]\n    },\n    \"contractInfo\": {\n      \"deployer\": \"0x95Ba4cF87D6723ad9C0Db21737D862bE80e93911\",\n      \"creationTx\": \"0xe7e0fe390354509cd08c9a0168536938600ddc552b3f7cb96030ebef62e75895\",\n      \"creationBlock\": 6082465,\n      \"isProxy\": true,\n      \"implementationAddress\": \"0xa2327a938Febf5FEC13baCFb16Ae10EcBc4cbDCF\",\n      \"contractName\": \"FiatTokenV2_2\"\n    },\n    \"dataCompleteness\": {\n      \"reportedTxCount\": 412,\n      \"fetchedTxCount\": 412,\n      \"completenessPct\": 100,\n      \"partialReason\": null\n    }\n  }\n}"
             },
             {
-              "name": "200 Heavy contract \u2014 overview only (heavy_contract_overview)",
+              "name": "200 Heavy contract — overview only (heavy_contract_overview)",
               "originalRequest": {
                 "method": "POST",
                 "header": [
@@ -649,7 +637,7 @@
           ]
         },
         {
-          "name": "GET /api/v1/check/{address} \u2014 fetch cached report",
+          "name": "GET /api/v1/check/{address} — fetch cached report",
           "request": {
             "method": "GET",
             "header": [
@@ -720,7 +708,7 @@
               "body": "{\n  \"success\": true,\n  \"data\": {\n    \"address\": \"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\n    \"network\": \"eth\",\n    \"riskScore\": 5,\n    \"riskLevel\": \"low\",\n    \"addressInfo\": {\n      \"type\": \"smart_contract\",\n      \"balance\": \"0 ETH\",\n      \"txCount\": 412,\n      \"firstSeen\": \"2020-06-09T18:43:35Z\",\n      \"lastSeen\": \"2026-04-25T10:11:02Z\"\n    },\n    \"patternFlags\": [],\n    \"contractAnalysis\": {\n      \"contractName\": \"FiatTokenV2_2\",\n      \"bytecodeSize\": 24576,\n      \"compilerVersion\": \"v0.6.12+commit.27d51765\",\n      \"deployer\": \"0x95Ba4cF87D6723ad9C0Db21737D862bE80e93911\",\n      \"isVerified\": true,\n      \"hasSelfdestruct\": false,\n      \"hasDelegatecall\": true,\n      \"hasCreate2\": false,\n      \"similarityFlags\": [\"ERC20\", \"Upgradeable\"],\n      \"knownSignatures\": [\"transfer(address,uint256)\", \"approve(address,uint256)\", \"balanceOf(address)\"]\n    },\n    \"contractInfo\": {\n      \"deployer\": \"0x95Ba4cF87D6723ad9C0Db21737D862bE80e93911\",\n      \"creationTx\": \"0xe7e0fe390354509cd08c9a0168536938600ddc552b3f7cb96030ebef62e75895\",\n      \"creationBlock\": 6082465,\n      \"isProxy\": true,\n      \"implementationAddress\": \"0xa2327a938Febf5FEC13baCFb16Ae10EcBc4cbDCF\",\n      \"contractName\": \"FiatTokenV2_2\"\n    },\n    \"dataCompleteness\": {\n      \"reportedTxCount\": 412,\n      \"fetchedTxCount\": 412,\n      \"completenessPct\": 100,\n      \"partialReason\": null\n    }\n  }\n}"
             },
             {
-              "name": "200 Heavy contract \u2014 overview only (heavy_contract_overview)",
+              "name": "200 Heavy contract — overview only (heavy_contract_overview)",
               "originalRequest": {
                 "method": "GET",
                 "header": [
@@ -763,7 +751,7 @@
           ]
         },
         {
-          "name": "GET /api/v1/check/status/{reportId} \u2014 async scan polling",
+          "name": "GET /api/v1/check/status/{reportId} — async scan polling",
           "request": {
             "method": "GET",
             "header": [
@@ -785,7 +773,7 @@
                 "{{sample_scan_status_id}}"
               ]
             },
-            "description": "Lightweight polling for async scans returned via 202 from POST /api/v1/check. Lifecycle: queued \u2192 analyzing \u2192 complete | failed. Does NOT consume quota. Poll every ~5 seconds until status is complete or failed (typically 1\u20135 minutes for heavy addresses)."
+            "description": "Lightweight polling for async scans returned via 202 from POST /api/v1/check. Lifecycle: queued → analyzing → complete | failed. Does NOT consume quota. Poll every ~5 seconds until status is complete or failed (typically 1–5 minutes for heavy addresses)."
           },
           "response": [
             {
@@ -1063,7 +1051,7 @@
           ]
         },
         {
-          "name": "POST /api/v1/check/deep \u2014 peel chain tracing",
+          "name": "POST /api/v1/check/deep — peel chain tracing",
           "request": {
             "method": "POST",
             "header": [
@@ -1093,31 +1081,6 @@
               ]
             }
           }
-        },
-        {
-          "name": "GET /api/v1/check/status/{id} \u2014 poll async scan",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/v1/check/status/{{sample_scan_status_id}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "check",
-                "status",
-                "{{sample_scan_status_id}}"
-              ]
-            }
-          }
         }
       ]
     },
@@ -1125,7 +1088,7 @@
       "name": "Token",
       "item": [
         {
-          "name": "POST /api/v1/token/check \u2014 honeypot + security score",
+          "name": "POST /api/v1/token/check — honeypot + security score",
           "request": {
             "method": "POST",
             "header": [
@@ -1157,7 +1120,7 @@
           }
         },
         {
-          "name": "POST /api/v1/token/check/stream \u2014 progressive SSE",
+          "name": "POST /api/v1/token/check/stream — progressive SSE",
           "request": {
             "method": "POST",
             "header": [
@@ -1194,7 +1157,7 @@
           }
         },
         {
-          "name": "POST /api/v1/token/reports \u2014 save report",
+          "name": "POST /api/v1/token/reports — save report",
           "request": {
             "method": "POST",
             "header": [
@@ -1226,7 +1189,7 @@
           }
         },
         {
-          "name": "GET /api/v1/token/reports \u2014 list saved",
+          "name": "GET /api/v1/token/reports — list saved",
           "request": {
             "method": "GET",
             "header": [
@@ -1255,7 +1218,7 @@
       "name": "Block / MEV",
       "item": [
         {
-          "name": "POST /api/v1/block/analyze \u2014 MEV patterns",
+          "name": "POST /api/v1/block/analyze — MEV patterns",
           "request": {
             "method": "POST",
             "header": [
@@ -1287,7 +1250,7 @@
           }
         },
         {
-          "name": "POST /api/v1/block/reports \u2014 save block analysis",
+          "name": "POST /api/v1/block/reports — save block analysis",
           "request": {
             "method": "POST",
             "header": [
@@ -1319,7 +1282,7 @@
           }
         },
         {
-          "name": "GET /api/v1/block/reports \u2014 list saved",
+          "name": "GET /api/v1/block/reports — list saved",
           "request": {
             "method": "GET",
             "header": [
@@ -1343,7 +1306,7 @@
           }
         },
         {
-          "name": "GET /api/v1/block/reports/{id} \u2014 fetch saved block report",
+          "name": "GET /api/v1/block/reports/{id} — fetch saved block report",
           "request": {
             "method": "GET",
             "header": [
@@ -1374,7 +1337,7 @@
       "name": "Multi-chain",
       "item": [
         {
-          "name": "POST /api/v1/multichain/scan \u2014 quick overview",
+          "name": "POST /api/v1/multichain/scan — quick overview",
           "request": {
             "method": "POST",
             "header": [
@@ -1406,7 +1369,7 @@
           }
         },
         {
-          "name": "POST /api/v1/multichain/analyze \u2014 full cross-chain (5 credits)",
+          "name": "POST /api/v1/multichain/analyze — full cross-chain (5 credits)",
           "request": {
             "method": "POST",
             "header": [
@@ -1421,7 +1384,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"address\": \"{{sample_address}}\"\n}"
+              "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"networks\": [\n    \"eth\",\n    \"polygon\",\n    \"arbitrum\"\n  ]\n}"
             },
             "url": {
               "raw": "{{base_url}}/api/v1/multichain/analyze",
@@ -1434,7 +1397,8 @@
                 "multichain",
                 "analyze"
               ]
-            }
+            },
+            "description": "Full cross-chain risk analysis. `networks` is REQUIRED and must be a non-empty array — runtime answers 422 `{networks: \"At least one network required\"}` without it. Returns 202 with a reportId; poll GET /api/v1/multichain/analyze/{reportId} for progress."
           },
           "event": [
             {
@@ -1452,7 +1416,7 @@
           ]
         },
         {
-          "name": "GET /api/v1/multichain/analyze/{reportId} \u2014 poll progress",
+          "name": "GET /api/v1/multichain/analyze/{reportId} — poll progress",
           "request": {
             "method": "GET",
             "header": [
@@ -1477,7 +1441,7 @@
           }
         },
         {
-          "name": "POST /api/v1/multichain/reports \u2014 save",
+          "name": "POST /api/v1/multichain/reports — save",
           "request": {
             "method": "POST",
             "header": [
@@ -1509,7 +1473,7 @@
           }
         },
         {
-          "name": "GET /api/v1/multichain/reports \u2014 list saved",
+          "name": "GET /api/v1/multichain/reports — list saved",
           "request": {
             "method": "GET",
             "header": [
@@ -1533,7 +1497,7 @@
           }
         },
         {
-          "name": "GET /api/v1/multichain/reports/{id} \u2014 fetch saved multi-chain report",
+          "name": "GET /api/v1/multichain/reports/{id} — fetch saved multi-chain report",
           "request": {
             "method": "GET",
             "header": [
@@ -1564,7 +1528,7 @@
       "name": "AI Investigation",
       "item": [
         {
-          "name": "POST /api/investigate \u2014 start investigation (SSE)",
+          "name": "POST /api/investigate — start investigation (SSE)",
           "request": {
             "method": "POST",
             "header": [
@@ -1583,7 +1547,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\",\n  \"question\": \"Summarize suspicious activity patterns.\"\n}"
+              "raw": "{\n  \"message\": \"Summarize suspicious activity patterns for {{sample_address}}.\"\n}"
             },
             "url": {
               "raw": "{{base_url}}/api/investigate",
@@ -1594,11 +1558,12 @@
                 "api",
                 "investigate"
               ]
-            }
+            },
+            "description": "Start or continue an AI investigation. The request field is `message` (max 5000 chars) — the previously published `question`/`address`/`network` shape was never read by the runtime, so the example could not succeed. Pass `investigationId` to continue a thread, or `reportId` to anchor it to a saved report. Responds as text/event-stream."
           }
         },
         {
-          "name": "GET /api/investigations \u2014 list",
+          "name": "GET /api/investigations — list",
           "request": {
             "method": "GET",
             "header": [
@@ -1637,7 +1602,7 @@
           ]
         },
         {
-          "name": "GET /api/investigations/{id} \u2014 detail",
+          "name": "GET /api/investigations/{id} — detail",
           "request": {
             "method": "GET",
             "header": [
@@ -1665,7 +1630,7 @@
       "name": "Watchlist & Alerts",
       "item": [
         {
-          "name": "GET /api/watchlist \u2014 list",
+          "name": "GET /api/watchlist — list",
           "request": {
             "method": "GET",
             "header": [
@@ -1687,7 +1652,7 @@
           }
         },
         {
-          "name": "POST /api/watchlist \u2014 add address",
+          "name": "POST /api/watchlist — add address",
           "request": {
             "method": "POST",
             "header": [
@@ -1731,7 +1696,7 @@
           ]
         },
         {
-          "name": "PATCH /api/watchlist/{id} \u2014 update",
+          "name": "PATCH /api/watchlist/{id} — update",
           "request": {
             "method": "PATCH",
             "header": [
@@ -1762,7 +1727,7 @@
           }
         },
         {
-          "name": "GET /api/watchlist/{id}/alerts \u2014 alerts for one item",
+          "name": "GET /api/watchlist/{id}/alerts — alerts for one item",
           "request": {
             "method": "GET",
             "header": [
@@ -1786,7 +1751,7 @@
           }
         },
         {
-          "name": "GET /api/alerts \u2014 all alerts",
+          "name": "GET /api/alerts — all alerts",
           "request": {
             "method": "GET",
             "header": [
@@ -1946,7 +1911,7 @@
           }
         },
         {
-          "name": "GET /api/v1/webhook/deliveries \u2014 recent webhook delivery attempts",
+          "name": "GET /api/v1/webhook/deliveries — recent webhook delivery attempts",
           "request": {
             "method": "GET",
             "header": [
@@ -1978,7 +1943,7 @@
       "description": "Custom address labels. Bulk import/export for compliance teams.",
       "item": [
         {
-          "name": "GET /api/labels \u2014 list",
+          "name": "GET /api/labels — list",
           "request": {
             "method": "GET",
             "header": [
@@ -2000,7 +1965,7 @@
           }
         },
         {
-          "name": "POST /api/labels \u2014 create",
+          "name": "POST /api/labels — create",
           "request": {
             "method": "POST",
             "header": [
@@ -2075,7 +2040,7 @@
           }
         },
         {
-          "name": "POST /api/labels/import \u2014 bulk import",
+          "name": "POST /api/labels/import — bulk import",
           "request": {
             "method": "POST",
             "header": [
@@ -2106,7 +2071,7 @@
           }
         },
         {
-          "name": "GET /api/labels/export \u2014 export all",
+          "name": "GET /api/labels/export — export all",
           "request": {
             "method": "GET",
             "header": [
@@ -2134,7 +2099,7 @@
       "name": "Graph Operations",
       "item": [
         {
-          "name": "POST /api/graph/expand \u2014 expand counterparties",
+          "name": "POST /api/graph/expand — expand counterparties",
           "request": {
             "method": "POST",
             "header": [
@@ -2165,7 +2130,7 @@
           }
         },
         {
-          "name": "POST /api/graph/csv-import \u2014 import fund flow CSV",
+          "name": "POST /api/graph/csv-import — import fund flow CSV",
           "request": {
             "method": "POST",
             "header": [
@@ -2201,7 +2166,7 @@
       "name": "Account",
       "item": [
         {
-          "name": "GET /api/v1/usage \u2014 quota & rate limit",
+          "name": "GET /api/v1/usage — quota & rate limit",
           "request": {
             "method": "GET",
             "header": [
@@ -2252,81 +2217,8 @@
       ]
     },
     {
-      "name": "Support",
-      "item": [
-        {
-          "name": "POST /api/support/tickets \u2014 create",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"subject\": \"API integration question\",\n  \"description\": \"Details...\",\n  \"category\": \"technical\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/support/tickets",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "support",
-                "tickets"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.response.code === 201) {",
-                  "  const d = pm.response.json().data;",
-                  "  if (d && d.id) pm.collectionVariables.set('sample_ticket_id', String(d.id));",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "GET /api/support/tickets \u2014 list",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/support/tickets",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "support",
-                "tickets"
-              ]
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "\u26a0 Destructive",
-      "description": "Every request here removes data or changes a resource irreversibly. Double-check the {{sample_*}} id variables before running \u2014 you might overwrite state you care about. Where possible, test against dummy records first.",
+      "name": "⚠ Destructive",
+      "description": "Every request here removes data or changes a resource irreversibly. Double-check the {{sample_*}} id variables before running — you might overwrite state you care about. Where possible, test against dummy records first.",
       "item": [
         {
           "name": "DELETE /api/watchlist/{id}",
@@ -2375,7 +2267,7 @@
           }
         },
         {
-          "name": "DELETE /api/investigations/{id} \u2014 archive investigation",
+          "name": "DELETE /api/investigations/{id} — archive investigation",
           "request": {
             "method": "DELETE",
             "header": [
@@ -2402,10 +2294,10 @@
     },
     {
       "name": "Public Share Links (no auth)",
-      "description": "Share-token endpoints are deliberately unauthenticated \u2014 the 64-hex token is the credential. Both requests are explicitly noauth (#729).",
+      "description": "Share-token endpoints are deliberately unauthenticated — the 64-hex token is the credential. Both requests are explicitly noauth (#729).",
       "item": [
         {
-          "name": "GET /api/share/{token} \u2014 public shared report (no auth)",
+          "name": "GET /api/share/{token} — public shared report (no auth)",
           "request": {
             "method": "GET",
             "header": [],
@@ -2428,7 +2320,7 @@
           "response": []
         },
         {
-          "name": "GET /api/share/{token}/graph \u2014 public shared graph (no auth)",
+          "name": "GET /api/share/{token}/graph — public shared graph (no auth)",
           "request": {
             "method": "GET",
             "header": [],

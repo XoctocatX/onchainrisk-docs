@@ -15,16 +15,17 @@ Status as of **2026-10-09**.
 | `POST /api/v1/check` (address risk score) | ✅ | ✅ | Sandbox responses gate paid-only fields. See "Field gating" below. |
 | `POST /api/v1/check/deep` (deep analysis) | ❌ | ✅ | Paid only. 14 EVM networks supported (see §3). Saved custom weights/overrides/labels do **not** apply to deep — the response carries `peelChain` only (no `riskScore`). Unsupported networks return `422 DEEP_ANALYSIS_UNSUPPORTED_NETWORK`. |
 | `POST /api/graph/expand` (paid graph, 1-hop) | ❌ | ✅ | Paid graph traversal. Up to 20 counterparties per call. |
-| `POST /api/v1/sandbox/graph/expand` (preview) | ✅ | ✅ | Both key types route to the sandbox profile. Limited to 7d / 20 nodes / 30 edges / 13 networks. |
+| `POST /api/v1/sandbox/graph/expand` (preview) | ✅ | ❌ Use `/api/graph/expand` | Sandbox graph preview — limited to 7d / 20 nodes / 30 edges / 13 networks. It is part of the **sandbox** contract: paid integrations use `POST /api/graph/expand` for the full 1-hop graph. (A paid key is accepted here for testing the sandbox response shape, but the result is always sandbox-scoped — no persistence, no usage row, no credit charge.) |
 | Watchlist + alerts (`/api/watchlist`, `/api/alerts`) | ❌ | ✅ | Paid only. ~5-min cron cadence. |
 | Webhooks (`/api/notifications/settings`) | ❌ | ✅ | HMAC SHA-256 signed (`X-Signature-256`). Single attempt per alert today (retries roadmap). |
-| Reports persistence (`/api/reports`) | ❌ | ✅ | Sandbox is stateless; no rows written. |
+| Reports persistence (`GET /api/reports/{id}`) | ❌ | ✅ | Sandbox is stateless; no rows written. Paid `/api/v1/check` calls persist a report, and **fetching one by id is the only published route** in this family — listing, renaming, deleting and graph/share state are dashboard-internal. |
 | Multichain scan (`/api/v1/multichain/*`) | ❌ | ✅ | Paid only. `/api/v1/multichain/analyze` honors saved custom weights / overrides / labels (same surface as `/api/v1/check`) since 2026-05-20 (PR #76). `/api/v1/multichain/scan` is balance/holdings only — no risk scoring, so customs do not apply there. |
+| Quota introspection (`GET /api/v1/usage`) | ✅ | ✅ | Published on both surfaces. A sandbox key reports `key_type: "sandbox"`. Returns quota and rate limit only — no account or profile data. |
 | Token security check (`/api/v1/token/check`) | ❌ | ✅ | Paid only. |
 | Block analysis (`/api/v1/block/*`) | ❌ | ✅ | Paid only. |
 | MEV aggregation administration | ❌ | ❌ | Internal operational surface; not part of the customer API. |
 | Investigations (`/api/investigate*`, AI-assisted) | ❌ | ✅ | Paid only. |
-| Custom labels (`/api/labels`, `/api/labels/import`, `/api/labels/export`) | Read-only (`GET /api/labels`) | ✅ Full CRUD + CSV | Sandbox can read but not mutate. |
+| Custom labels (`/api/labels`, `/api/labels/import`, `/api/labels/export`) | ❌ Not a sandbox operation | ✅ Full CRUD + CSV | **Paid only.** Label management is not part of the published sandbox contract; the paid API provides the documented create / read / update / delete and CSV import/export operations. |
 | Entity clustering (`clusters` field on `/api/v1/check`) | ❌ (gated null) | ✅ | Production. Populated when target has labeled counterparties grouped into ≥2-member entities. May be `[]` for fresh wallets. |
 | Cross-chain bridge detection (`crossChain` field) | ❌ (gated null) | ✅ | Production. 13 destination chains including Monero (flagged not-trackable) — `DestinationChain` enum in `ethforensics/analysis/crosschain.py`. Coverage = curated registry of 13 bridge contracts. |
 
@@ -124,7 +125,7 @@ Counted only against **synchronous** `/api/v1/check`, `/api/v1/check/deep`, `/ap
 | Business | Calendar month | 5000 / month |
 | Enterprise | — | Unlimited (sentinel 999999) |
 
-Overage is handled by **prepaid credits** (`/api/billing/credits/buy`). 1 credit = 1 sync check. Credits decrement before quota.
+Overage is handled by **prepaid credits**, purchased in the dashboard — credit purchase is not part of the integration API. 1 credit = 1 sync check. Credits decrement before quota.
 
 ---
 
@@ -142,7 +143,7 @@ Overage is handled by **prepaid credits** (`/api/billing/credits/buy`). 1 credit
 - Paid graph expansion (1-hop) with handlers for **20 networks** — see §3 for the set and for the three accepted networks that return 422 instead.
 - Cross-chain bridge detection across **13 destination chains** (source of truth: the `DestinationChain` enum in `ethforensics/analysis/crosschain.py` — 13 real chains plus an `unknown` sentinel), via a curated registry of 13 bridge contracts.
 - Entity clustering on paid `/api/v1/check`.
-- Async path for heavy EVM scans (auto-routed via `/api/analyze/estimate`, polled via `/api/v1/check/status/{reportId}`).
+- Async path for heavy EVM scans: routing is decided server-side and needs no extra call from you — `POST /api/v1/check` answers **202** with a `reportId`, which you poll via `GET /api/v1/check/status/{reportId}`.
 
 ### Roadmap (not in production)
 - **Webhook retries** — single attempt today; retries planned.

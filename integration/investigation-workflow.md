@@ -161,14 +161,15 @@ Sandbox: **no persisted reports**. Every sandbox call is stateless.
 
 Paid: every `/api/v1/check` call writes a row to your `reports` history.
 
-```bash
-# List
-curl -H "Authorization: Bearer ocr_live_PLACEHOLDER" \
-  https://api.onchainrisk.io/api/reports
+**One route in this family is public: fetch by id.** Listing, renaming, deleting and
+graph/share state are dashboard-internal and are not part of the integration API — keep the
+`reportId` returned by the check response (or by the 202 async flow above) and fetch that report
+directly.
 
-# Detail
+```bash
+# Detail — the published route. `reportId` comes from the /api/v1/check response.
 curl -H "Authorization: Bearer ocr_live_PLACEHOLDER" \
-  https://api.onchainrisk.io/api/reports/{public_id}
+  https://api.onchainrisk.io/api/reports/{reportId}
 ```
 
 Programmatic export to PDF/XLSX/Markdown is **not** in the API today. Reports are exportable from the dashboard. Roadmap.
