@@ -83,7 +83,7 @@
       "key": "sample_key_id",
       "value": "REPLACE_AFTER_KEY_LIST",
       "type": "string",
-      "description": "Auto-populated from GET /api/keys (first returned key id)."
+      "description": "Set manually to an API-key id you own. (Key management is dashboard/session-only and is deliberately not part of the public API surface \u2014 see #729.)"
     },
     {
       "key": "sample_ticket_id",
@@ -1367,54 +1367,6 @@
             },
             "description": "Fetch one saved block report by id. Accepts the UUID reportPublicId returned by POST /api/v1/block/analyze (preferred) or the legacy integer id. Owned by the calling key; 404 otherwise. Does not consume quota."
           }
-        },
-        {
-          "name": "GET /api/v1/mev/bots \u2014 known MEV bot stats",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/v1/mev/bots",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "mev",
-                "bots"
-              ]
-            }
-          }
-        },
-        {
-          "name": "GET /api/v1/mev/stats \u2014 aggregate MEV stats",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/v1/mev/stats",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "mev",
-                "stats"
-              ]
-            }
-          }
         }
       ]
     },
@@ -1581,7 +1533,7 @@
           }
         },
         {
-          "name": "GET /api/v1/multichain/reports/{id} — fetch saved multi-chain report",
+          "name": "GET /api/v1/multichain/reports/{id} \u2014 fetch saved multi-chain report",
           "request": {
             "method": "GET",
             "header": [
@@ -1992,6 +1944,32 @@
               ]
             }
           }
+        },
+        {
+          "name": "GET /api/v1/webhook/deliveries \u2014 recent webhook delivery attempts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{paid_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/webhook/deliveries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "webhook",
+                "deliveries"
+              ]
+            },
+            "description": "Public-contract endpoint (source says so explicitly); requireAuth, so a paid API key works. Added in #729 for paid OpenAPI <-> Postman parity."
+          },
+          "response": []
         }
       ]
     },
@@ -2274,96 +2252,6 @@
       ]
     },
     {
-      "name": "API Keys",
-      "description": "All /api/keys endpoints accept the paid API key (empirically verified). Sandbox-tier free users create keys via dashboard only.",
-      "item": [
-        {
-          "name": "GET /api/keys \u2014 list",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/keys",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "keys"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.response.code === 200) {",
-                  "  const body = pm.response.json();",
-                  "  const list = body.data?.keys || body.data || [];",
-                  "  if (Array.isArray(list) && list.length > 0 && list[0].id) {",
-                  "    pm.collectionVariables.set('sample_key_id', String(list[0].id));",
-                  "  }",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "POST /api/keys \u2014 create new key",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"My integration key\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/keys",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "keys"
-              ]
-            },
-            "description": "Creates a new paid API key (your plan determines the max allowed). The full key is returned once in response.data.key \u2014 store it securely."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.response.code === 201) {",
-                  "  const d = pm.response.json().data;",
-                  "  if (d && d.id) pm.collectionVariables.set('sample_key_id', String(d.id));",
-                  "}"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
       "name": "Support",
       "item": [
         {
@@ -2437,46 +2325,6 @@
       ]
     },
     {
-      "name": "\u26a0 Advanced",
-      "description": "Not destructive, but require intent: triggers non-free compute, changes settings state.",
-      "item": [
-        {
-          "name": "POST /api/v1/mev/scan/trigger \u2014 manual MEV scan",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"network\": \"eth\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/v1/mev/scan/trigger",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "mev",
-                "scan",
-                "trigger"
-              ]
-            },
-            "description": "Triggers a manual MEV scan. Non-free compute \u2014 use sparingly; cron typically handles this automatically."
-          }
-        }
-      ]
-    },
-    {
       "name": "\u26a0 Destructive",
       "description": "Every request here removes data or changes a resource irreversibly. Double-check the {{sample_*}} id variables before running \u2014 you might overwrite state you care about. Where possible, test against dummy records first.",
       "item": [
@@ -2527,7 +2375,7 @@
           }
         },
         {
-          "name": "DELETE /api/keys/{id} \u2014 revoke API key",
+          "name": "DELETE /api/investigations/{id} \u2014 archive investigation",
           "request": {
             "method": "DELETE",
             "header": [
@@ -2537,43 +2385,71 @@
               }
             ],
             "url": {
-              "raw": "{{base_url}}/api/keys/{{sample_key_id}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "keys",
-                "{{sample_key_id}}"
-              ]
-            },
-            "description": "Revokes the specified key. If you revoke the same key you're authenticating with, subsequent requests will 401."
-          }
-        },
-        {
-          "name": "POST /api/investigations/{id}/archive",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/investigations/{{sample_investigation_id}}/archive",
+              "raw": "{{base_url}}/api/investigations/{{sample_investigation_id}}",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "api",
                 "investigations",
-                "{{sample_investigation_id}}",
-                "archive"
+                "{{sample_investigation_id}}"
               ]
             },
-            "description": "Archives the investigation (soft removal from active list)."
+            "description": "Soft-delete (archive). #729: the collection previously sent POST .../archive, which has no runtime route."
           }
+        }
+      ]
+    },
+    {
+      "name": "Public Share Links (no auth)",
+      "description": "Share-token endpoints are deliberately unauthenticated \u2014 the 64-hex token is the credential. Both requests are explicitly noauth (#729).",
+      "item": [
+        {
+          "name": "GET /api/share/{token} \u2014 public shared report (no auth)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/share/{{sample_share_token}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "share",
+                "{{sample_share_token}}"
+              ]
+            },
+            "description": "Intentionally UNAUTHENTICATED: the 64-hex share token is the credential. Auth is set to noauth so this request does not inherit a Bearer token. Added in #729 for parity.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/share/{token}/graph \u2014 public shared graph (no auth)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/share/{{sample_share_token}}/graph",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "share",
+                "{{sample_share_token}}",
+                "graph"
+              ]
+            },
+            "description": "Intentionally UNAUTHENTICATED, same token-as-credential model as the shared report. Auth is noauth. Added in #729 for parity.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
         }
       ]
     }
