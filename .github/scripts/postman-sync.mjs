@@ -475,6 +475,277 @@ export function autopublishEnabled(env = process.env) {
   return env[ACTIVATION_VAR] === 'true';
 }
 
+// ──────────────────────── safe structural diff (diagnostic) ────────────────────────
+//
+// Answers "what would change if we publish?" without printing a single value. It compares the
+// two already-normalized collections, so it sees exactly what the NOOP/UPDATE decision sees,
+// and it reports PATHS and CATEGORIES only — never old/new content, never a body, never a
+// header value, never an id. Purely diagnostic: it reads normalized copies and influences
+// nothing about binding, normalization, identity, the payload or verification.
+
+/** Patterns that must never be echoed, even when they appear in a structural label. */
+const SECRET_SHAPED = [
+  /PMAK-[A-Za-z0-9]{6,}/,
+  /ocr_(live|test|sandbox)_[A-Za-z0-9]{6,}/,
+  /eyJ[A-Za-z0-9_-]{15,}/,
+  /\bBearer\s+\S{6,}/i,
+  /\b[A-Za-z0-9+/]{40,}={0,2}\b/,          // long base64-ish blob
+  /\b[0-9a-f]{32,}\b/i,                    // long hex blob
+];
+
+const LABEL_MAX = 80;
+
+/** C0, DEL, C1 and the Unicode line separators: anything that could forge a log line. */
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+
+const fp = (raw) => createHash('sha256').update(raw).digest('hex').slice(0, 8);
+
+/**
+ * THE one path-component safety policy. Every externally-derived component that can reach
+ * formatSafeDiff() goes through this — folder and request names, HTTP method, each URL path
+ * segment, example names, event `listen`, header / variable / query keys, and object property
+ * keys. R1: three surfaces previously bypassed it (the URL path, the method, and arbitrary
+ * object keys), each of which could put a credential or a forged log line into an Actions log.
+ *
+ * Order matters. Control characters are neutralised first so a newline cannot escape the line
+ * even if the rest of the label is later redacted or truncated; the secret check then runs on
+ * the ORIGINAL text, so splitting a credential with a tab does not smuggle it past.
+ */
+export function safeComponent(value, { kind = 'label' } = {}) {
+  const raw = value === undefined || value === null ? '' : String(value);
+  if (!raw) return `<no ${kind}>`;
+
+  /*
+   * R2: a control character must not be able to SPLIT a credential past the detector. A key
+   * whose prefix is separated from its body by a TAB matches no secret shape as written, yet
+   * the neutralised render would have printed the two halves joined by a placeholder — nearly
+   * the whole token. (The literal form is not written here, so the repository secret-shape scan
+   * stays meaningful; see the split fixtures in the tests.) So every shape is
+   * tested against three canonical forms: the raw text, the text with control characters
+   * removed (which rejoins a split token), and with them turned into spaces (which keeps two
+   * genuinely separate words apart). Only the neutralised safe form is ever rendered; no
+   * reconstructed canonical form is printed.
+   */
+  const candidates = [raw, raw.replace(CONTROL_CHARS, ''), raw.replace(CONTROL_CHARS, ' ')];
+  if (SECRET_SHAPED.some((re) => candidates.some((c) => re.test(c)))) {
+    return `<redacted ${kind} sha256:${fp(raw)}>`;
+  }
+
+  const tame = raw.replace(CONTROL_CHARS, '·');
+  if (tame.length > LABEL_MAX) {
+    /*
+     * R2: a truncated component is also a SEMANTIC SELECTOR, so it has to stay unique. Two
+     * labels sharing their first LABEL_MAX characters and their total length rendered
+     * identically, which paired two distinct folders as one entity and turned a real
+     * remove-plus-add into a misleading nested CHANGED. The fingerprint of the full component
+     * restores identity while still exposing only the readable prefix.
+     */
+    return `${tame.slice(0, LABEL_MAX)}…<truncated ${tame.length} sha256:${fp(raw)}>`;
+  }
+  return tame;
+}
+
+/** Retained name for the same policy; `safeLabel` is what the earlier tests call. */
+export const safeLabel = safeComponent;
+
+/**
+ * Property names from the Collection v2.1 schema and the collection API, which are structure
+ * rather than content and so are readable as they are. Anything NOT on this list is arbitrary
+ * — an extension field, or user data — and is fingerprinted instead of echoed.
+ */
+const KNOWN_KEYS = new Set([
+  'info', 'name', 'description', 'schema', 'version', 'variable', 'item', 'event', 'auth',
+  'protocolProfileBehavior', '_postman_id', 'postman_id', 'uid', 'owner', 'fork', 'createdAt',
+  'updatedAt', 'lastUpdatedBy', 'lastRevision', '_postman_exported_at', '_postman_exported_using',
+  'request', 'response', 'method', 'url', 'header', 'headers', 'body', 'raw', 'mode', 'options',
+  'urlencoded', 'formdata', 'file', 'graphql', 'src', 'disabled', 'key', 'value', 'type', 'id',
+  'protocol', 'host', 'path', 'port', 'query', 'hash', 'originalRequest', 'status', 'code',
+  'cookie', 'responseTime', 'responseSize', 'language', '_postman_previewlanguage',
+  'listen', 'script', 'exec', 'packages', 'prerequest', 'test', 'saveOptions',
+  'bearer', 'basic', 'apikey', 'oauth2', 'noauth', 'token', 'username', 'password', 'in',
+  'content', 'contentType', 'major', 'minor', 'patch', 'identifier', 'meta', 'variables',
+]);
+
+/**
+ * A property key in a rendered path. Known schema keys stay literal so ordinary paths read
+ * well; anything else is fingerprinted, because an extension field's KEY can itself be
+ * sensitive and the renderer must not decide that by looking at it.
+ */
+export function safeKey(key) {
+  const raw = String(key ?? '');
+  if (KNOWN_KEYS.has(raw)) return raw;
+  return `<key sha256:${fp(raw)}>`;
+}
+
+/**
+ * The normalized URL path, sanitised segment by segment so `POST /api/v1/check` stays readable
+ * while a secret-shaped segment is redacted on its own rather than destroying the whole path.
+ */
+export function safePath(url) {
+  const normalized = normalizePath(url);
+  if (!normalized) return '';
+  return normalized
+    .split('/')
+    .map((seg) => (seg === '' ? '' : safeComponent(seg, { kind: 'path segment' })))
+    .join('/');
+}
+
+/**
+ * Methods a Postman collection can legitimately carry — HTTP plus the WebDAV verbs Postman
+ * offers in its method picker. This is an ALLOWLIST on purpose.
+ *
+ * R2: the previous shape test `/^[A-Z]{3,10}$/` fell through to safeComponent(), which returns
+ * ordinary non-secret text literally — so `GET /etc/passwd; rm -rf` was echoed as
+ * `GET /ETC/PASSWD; RM -RF`. Worse, my own test passed because it searched for the lowercase
+ * form after production code had upper-cased it: green for the wrong reason. Anything not on
+ * this list is now fingerprinted and never rendered.
+ */
+const KNOWN_METHODS = new Set([
+  'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'TRACE', 'CONNECT',
+  'COPY', 'LINK', 'UNLINK', 'PURGE', 'LOCK', 'UNLOCK', 'PROPFIND', 'PROPPATCH',
+  'MKCOL', 'MOVE', 'REPORT', 'SEARCH', 'VIEW',
+]);
+
+/** An HTTP method is not assumed trustworthy: only an accepted verb renders literally. */
+export function safeMethod(method) {
+  const raw = String(method ?? '');
+  if (!raw) return '';
+  const upper = raw.toUpperCase();
+  if (KNOWN_METHODS.has(upper)) return upper;
+  return `<method sha256:${fp(raw)}>`;
+}
+
+/** A folder is identified by name; a request by method plus normalized path. */
+function itemLabel(node) {
+  if (!isObj(node)) return null;
+  if (Array.isArray(node.item)) return safeComponent(node.name, { kind: 'folder name' });
+  const method = safeMethod(node.request?.method);
+  const path = safePath(node.request?.url);
+  if (!method && !path) return safeComponent(node.name, { kind: 'request name' });
+  return `${method} ${path}`.trim();
+}
+
+/** Arrays that have a stable semantic identity, and how to derive it. */
+const ARRAY_KEYERS = {
+  item: itemLabel,
+  response: (x) => safeComponent(x?.name, { kind: 'example name' }),
+  event: (x) => safeComponent(x?.listen, { kind: 'listen' }),
+  header: (x) => safeComponent(x?.key, { kind: 'header name' }),
+  headers: (x) => safeComponent(x?.key, { kind: 'header name' }),
+  variable: (x) => safeComponent(x?.key, { kind: 'variable name' }),
+  query: (x) => safeComponent(x?.key, { kind: 'query name' }),
+};
+
+/** Can this array be keyed semantically — every element yielding a distinct, non-empty key? */
+function keyable(arr, field) {
+  const keyer = ARRAY_KEYERS[field];
+  if (!keyer || !Array.isArray(arr)) return false;
+  const keys = arr.map((x) => keyer(x));
+  return keys.every((k) => k !== null && k !== undefined && k !== '')
+    && new Set(keys).size === keys.length;
+}
+
+/**
+ * Index an array for comparison.
+ *
+ * The strategy is decided ONCE FOR THE PAIR, by the caller, and applied to both sides. Indexing
+ * each side independently produced incoherent output when one side was keyable and the other was
+ * not: the paid collection genuinely has two events with `listen: "test"` on one request, so a
+ * remote with a single `test` event reported `event[0]`/`event[1]` as ADDED *and*
+ * `event[test]` as REMOVED — describing one edit as three unrelated ones.
+ */
+function indexArray(arr, field, semantic) {
+  if (semantic) {
+    const keyer = ARRAY_KEYERS[field];
+    return arr.map((x, i) => [`[${keyer(x)}]`, arr[i]]);
+  }
+  return arr.map((x, i) => [`[${i}]`, x]);
+}
+
+const isLeafArray = (a) => Array.isArray(a) && a.every((x) => !isObj(x) && !Array.isArray(x));
+
+/**
+ * Structural differences between two normalized collections.
+ *
+ * Direction: `local` is the state we would publish, `remote` is what Postman holds now. So
+ * ADDED means present locally and absent remotely — it would be created; REMOVED means present
+ * remotely and absent locally — it would be deleted.
+ *
+ * @returns {{added:string[], removed:string[], changed:string[]}} sorted, value-free paths
+ */
+export function safeDiff(local, remote) {
+  const added = [];
+  const removed = [];
+  const changed = [];
+
+  const walk = (a, b, path, fieldOf = '') => {
+    const aMissing = a === undefined;
+    const bMissing = b === undefined;
+    if (aMissing && bMissing) return;
+    if (bMissing) { added.push(path); return; }
+    if (aMissing) { removed.push(path); return; }
+
+    const aObj = isObj(a);
+    const bObj = isObj(b);
+    const aArr = Array.isArray(a);
+    const bArr = Array.isArray(b);
+
+    if (aObj && bObj) {
+      for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+        // R1: the key is externally derived too — an extension field's name can itself be
+        // sensitive, so it goes through the same policy as every other component.
+        const rendered = safeKey(k);
+        walk(a[k], b[k], path ? `${path}.${rendered}` : rendered, k);
+      }
+      return;
+    }
+    if (aArr && bArr) {
+      // An array of scalars is reported as one changed path rather than per element: the
+      // element positions carry no stable identity and naming them edges toward values.
+      if (isLeafArray(a) && isLeafArray(b)) {
+        if (JSON.stringify(a) !== JSON.stringify(b)) changed.push(path);
+        return;
+      }
+      // `fieldOf` is tracked separately from the rendered path: the keyer lookup needs the raw
+      // schema key, which a rendered path may have fingerprinted.
+      const field = fieldOf;
+      // both sides must be keyable, or neither is keyed
+      const semantic = keyable(a, field) && keyable(b, field);
+      const ai = new Map(indexArray(a, field, semantic));
+      const bi = new Map(indexArray(b, field, semantic));
+      for (const key of new Set([...ai.keys(), ...bi.keys()])) {
+        walk(ai.get(key), bi.get(key), `${path}${key}`, fieldOf);
+      }
+      return;
+    }
+    // shape change, or two differing scalars
+    if (aObj !== bObj || aArr !== bArr || JSON.stringify(a) !== JSON.stringify(b)) changed.push(path);
+  };
+
+  walk(normalizeForCompare(local), normalizeForCompare(remote), '');
+
+  const dedupeSort = (xs) => [...new Set(xs)].sort();
+  return { added: dedupeSort(added), removed: dedupeSort(removed), changed: dedupeSort(changed) };
+}
+
+/** Render the diff for a log, capped so one large drift cannot bury the rest of the run. */
+export function formatSafeDiff(diff, { max = 40, log = console.log } = {}) {
+  log('  diff summary (paths only — no values, no ids, no bodies):');
+  log(`    added   : ${diff.added.length}`);
+  log(`    removed : ${diff.removed.length}`);
+  log(`    changed : ${diff.changed.length}`);
+  for (const [label, paths] of [['added', diff.added], ['removed', diff.removed], ['changed', diff.changed]]) {
+    if (!paths.length) continue;
+    // A blank line is emitted as its own call, never embedded: every line this function hands to
+    // the logger must be exactly one line, so "no control character in any emitted line" is a
+    // property the caller can rely on.
+    log('');
+    log(`    ${label} paths:`);
+    for (const p of paths.slice(0, max)) log(`      ${p}`);
+    if (paths.length > max) log(`      …and ${paths.length - max} more`);
+  }
+}
+
 // ───────────────────────────── Postman API ─────────────────────────────
 
 async function postman(method, path, { apiKey, body } = {}) {
@@ -564,6 +835,10 @@ async function syncOne(entry, { apiKey, publish, log, env = process.env }) {
     log('  remote already matches the reviewed local file; no PUT issued.');
     return { role: entry.role, action, put: false, verified: true, localHash, remoteHash };
   }
+
+  // ACTION=UPDATE only: show a reviewer WHAT would change, structurally and without values.
+  formatSafeDiff(safeDiff(local, remote), { log });
+
   if (!publish) {
     log('  verify-only run: a PUT would be required. Not issuing it.');
     return { role: entry.role, action, put: false, verified: null, localHash, remoteHash };

@@ -97,7 +97,67 @@ Before any write, for each collection, without secrets:
 The `remote identity` line reports the id and uid the API returned, fingerprinted the same way.
 
 `ACTION = NOOP` means the remote already matches this repository and no write is issued — which
-is the expected result right after a manual Postman update. After a write the run re-reads the
+is the expected result right after a manual Postman update.
+
+On `ACTION = UPDATE` the run additionally prints a **safe structural diff**, so a reviewer can
+answer "what would change if we publish?" before approving a write:
+
+```
+  diff summary (paths only — no values, no ids, no bodies):
+    added   : 2
+    removed : 3
+    changed : 4
+
+    changed paths:
+      info.description
+      item[Analysis].item[POST /api/v1/check].request.description
+      item[Analysis].item[POST /api/v1/check].event[test].script.exec
+```
+
+It reports **paths and categories only**. No old or new value, no request or response body, no
+header or variable value, no id or uid, no hash beyond the two normalized SHAs already shown.
+`ADDED` means publishing would create it, `REMOVED` that publishing would delete it — the local
+file is the target state.
+
+Selectors are semantic where a stable identity exists: folder name, request method plus
+normalized path, example name, event `listen`, header and variable key. Positional indexes are
+used only where neither side has a usable identity — the paid collection genuinely has two
+events with `listen: "test"` on one request, and the strategy is chosen once for the pair so one
+edit never reads as an unrelated add plus remove.
+
+**Every** externally-derived path component goes through one safety policy — folder and request
+names, the HTTP method, each URL path segment, example names, event `listen`, header / variable /
+query keys, and object property keys. Nothing relies on a caller remembering to call it.
+
+- anything secret-shaped (a Postman API key, an `ocr_live_`/`ocr_test_` key, a JWT, a
+  `Bearer …` header, a long hex or base64 blob) becomes a short deterministic fingerprint. Each
+  shape is tested against three canonical forms — the raw text, the text with control characters
+  removed, and with them turned into spaces — so a credential split by a tab cannot slip past
+  the detector while two genuinely separate words stay readable;
+- control characters — C0, DEL, C1 and the Unicode line separators — are replaced with a visible
+  placeholder, so a name cannot forge a log line or emit a terminal escape;
+- an over-long component keeps its readable prefix and gains both its true length and a
+  fingerprint of the whole value. The fingerprint is not cosmetic: a rendered label is also a
+  semantic array selector, and without it two labels sharing their first 80 characters and their
+  total length collapsed into one selector — pairing two distinct folders and turning a real
+  remove-plus-add into a misleading nested `CHANGED`;
+- an HTTP method renders literally only if it is on an explicit allowlist (the HTTP verbs plus
+  the WebDAV ones Postman offers). Anything else becomes `<method sha256:…>`; a shape test is not
+  enough, because an odd-but-not-secret method would otherwise be echoed;
+- a URL path is sanitised segment by segment, so one bad segment is redacted on its own and
+  `POST /api/v1/check` stays readable;
+- property keys from the Collection v2.1 schema render literally, and any other key is
+  fingerprinted — an extension field's *name* can itself be sensitive, and the renderer must not
+  decide that by looking at it.
+
+Every line the formatter emits is exactly one line, so "no control character in any emitted
+line" is a property the caller can rely on. A test asserts that a realistic diff of the two
+shipped collections contains no fingerprinted component at all, so readability is not traded
+away to satisfy the safety rules.
+
+It is diagnostic only: it reads the two already-normalized collections and changes nothing about
+target binding, normalization, identity preservation, ambiguity handling, the activation gate,
+the payload or post-write verification. `ACTION = NOOP` prints no diff section at all. After a write the run re-reads the
 collection and reports `POSTMAN_REMOTE_MATCH_LOCAL = YES`; an HTTP 200 on its own is not treated
 as success.
 
