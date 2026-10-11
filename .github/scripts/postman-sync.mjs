@@ -475,6 +475,169 @@ export function autopublishEnabled(env = process.env) {
   return env[ACTIVATION_VAR] === 'true';
 }
 
+// ──────────────────────── safe structural diff (diagnostic) ────────────────────────
+//
+// Answers "what would change if we publish?" without printing a single value. It compares the
+// two already-normalized collections, so it sees exactly what the NOOP/UPDATE decision sees,
+// and it reports PATHS and CATEGORIES only — never old/new content, never a body, never a
+// header value, never an id. Purely diagnostic: it reads normalized copies and influences
+// nothing about binding, normalization, identity, the payload or verification.
+
+/** Patterns that must never be echoed, even when they appear in a structural label. */
+const SECRET_SHAPED = [
+  /PMAK-[A-Za-z0-9]{6,}/,
+  /ocr_(live|test|sandbox)_[A-Za-z0-9]{6,}/,
+  /eyJ[A-Za-z0-9_-]{15,}/,
+  /\bBearer\s+\S{6,}/i,
+  /\b[A-Za-z0-9+/]{40,}={0,2}\b/,          // long base64-ish blob
+  /\b[0-9a-f]{32,}\b/i,                    // long hex blob
+];
+
+const LABEL_MAX = 80;
+
+/**
+ * Render a structural label safely.
+ *
+ * Collection, folder, request and response names, HTTP methods, normalized URL paths, event
+ * `listen` values and header/variable keys are ordinary public structure, so they are shown as
+ * they are. But a label is still arbitrary text: if a collection ever carried a credential in a
+ * name, blindly echoing it here would leak it into a review artifact. Anything secret-shaped is
+ * replaced by a short fingerprint, and over-long labels are truncated with the fact marked.
+ */
+export function safeLabel(value, { kind = 'label' } = {}) {
+  const raw = value === undefined || value === null ? '' : String(value);
+  if (!raw) return `<no ${kind}>`;
+  if (SECRET_SHAPED.some((re) => re.test(raw))) {
+    return `<redacted ${kind} sha256:${createHash('sha256').update(raw).digest('hex').slice(0, 8)}>`;
+  }
+  if (raw.length > LABEL_MAX) {
+    return `${raw.slice(0, LABEL_MAX)}…<truncated ${raw.length}>`;
+  }
+  return raw;
+}
+
+/** A folder is identified by name; a request by method plus normalized path. */
+function itemLabel(node) {
+  if (!isObj(node)) return null;
+  if (Array.isArray(node.item)) return safeLabel(node.name, { kind: 'folder name' });
+  const method = String(node.request?.method ?? '').toUpperCase();
+  const path = normalizePath(node.request?.url);
+  if (!method && !path) return safeLabel(node.name, { kind: 'request name' });
+  return `${method} ${path}`.trim();
+}
+
+/** Arrays that have a stable semantic identity, and how to derive it. */
+const ARRAY_KEYERS = {
+  item: itemLabel,
+  response: (x) => safeLabel(x?.name, { kind: 'example name' }),
+  event: (x) => safeLabel(x?.listen, { kind: 'listen' }),
+  header: (x) => safeLabel(x?.key, { kind: 'header name' }),
+  headers: (x) => safeLabel(x?.key, { kind: 'header name' }),
+  variable: (x) => safeLabel(x?.key, { kind: 'variable name' }),
+  query: (x) => safeLabel(x?.key, { kind: 'query name' }),
+};
+
+/** Can this array be keyed semantically — every element yielding a distinct, non-empty key? */
+function keyable(arr, field) {
+  const keyer = ARRAY_KEYERS[field];
+  if (!keyer || !Array.isArray(arr)) return false;
+  const keys = arr.map((x) => keyer(x));
+  return keys.every((k) => k !== null && k !== undefined && k !== '')
+    && new Set(keys).size === keys.length;
+}
+
+/**
+ * Index an array for comparison.
+ *
+ * The strategy is decided ONCE FOR THE PAIR, by the caller, and applied to both sides. Indexing
+ * each side independently produced incoherent output when one side was keyable and the other was
+ * not: the paid collection genuinely has two events with `listen: "test"` on one request, so a
+ * remote with a single `test` event reported `event[0]`/`event[1]` as ADDED *and*
+ * `event[test]` as REMOVED — describing one edit as three unrelated ones.
+ */
+function indexArray(arr, field, semantic) {
+  if (semantic) {
+    const keyer = ARRAY_KEYERS[field];
+    return arr.map((x, i) => [`[${keyer(x)}]`, arr[i]]);
+  }
+  return arr.map((x, i) => [`[${i}]`, x]);
+}
+
+const isLeafArray = (a) => Array.isArray(a) && a.every((x) => !isObj(x) && !Array.isArray(x));
+
+/**
+ * Structural differences between two normalized collections.
+ *
+ * Direction: `local` is the state we would publish, `remote` is what Postman holds now. So
+ * ADDED means present locally and absent remotely — it would be created; REMOVED means present
+ * remotely and absent locally — it would be deleted.
+ *
+ * @returns {{added:string[], removed:string[], changed:string[]}} sorted, value-free paths
+ */
+export function safeDiff(local, remote) {
+  const added = [];
+  const removed = [];
+  const changed = [];
+
+  const walk = (a, b, path) => {
+    const aMissing = a === undefined;
+    const bMissing = b === undefined;
+    if (aMissing && bMissing) return;
+    if (bMissing) { added.push(path); return; }
+    if (aMissing) { removed.push(path); return; }
+
+    const aObj = isObj(a);
+    const bObj = isObj(b);
+    const aArr = Array.isArray(a);
+    const bArr = Array.isArray(b);
+
+    if (aObj && bObj) {
+      for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+        walk(a[k], b[k], path ? `${path}.${k}` : k);
+      }
+      return;
+    }
+    if (aArr && bArr) {
+      // An array of scalars is reported as one changed path rather than per element: the
+      // element positions carry no stable identity and naming them edges toward values.
+      if (isLeafArray(a) && isLeafArray(b)) {
+        if (JSON.stringify(a) !== JSON.stringify(b)) changed.push(path);
+        return;
+      }
+      const field = path.split('.').pop().replace(/\[.*$/, '');
+      // both sides must be keyable, or neither is keyed
+      const semantic = keyable(a, field) && keyable(b, field);
+      const ai = new Map(indexArray(a, field, semantic));
+      const bi = new Map(indexArray(b, field, semantic));
+      for (const key of new Set([...ai.keys(), ...bi.keys()])) {
+        walk(ai.get(key), bi.get(key), `${path}${key}`);
+      }
+      return;
+    }
+    // shape change, or two differing scalars
+    if (aObj !== bObj || aArr !== bArr || JSON.stringify(a) !== JSON.stringify(b)) changed.push(path);
+  };
+
+  walk(normalizeForCompare(local), normalizeForCompare(remote), '');
+
+  const dedupeSort = (xs) => [...new Set(xs)].sort();
+  return { added: dedupeSort(added), removed: dedupeSort(removed), changed: dedupeSort(changed) };
+}
+
+/** Render the diff for a log, capped so one large drift cannot bury the rest of the run. */
+export function formatSafeDiff(diff, { max = 40, log = console.log } = {}) {
+  log('  diff summary (paths only — no values, no ids, no bodies):');
+  log(`    added   : ${diff.added.length}`);
+  log(`    removed : ${diff.removed.length}`);
+  log(`    changed : ${diff.changed.length}`);
+  for (const [label, paths] of [['added', diff.added], ['removed', diff.removed], ['changed', diff.changed]]) {
+    if (!paths.length) continue;
+    log(`\n    ${label} paths:`);
+    for (const p of paths.slice(0, max)) log(`      ${p}`);
+    if (paths.length > max) log(`      …and ${paths.length - max} more`);
+  }
+}
+
 // ───────────────────────────── Postman API ─────────────────────────────
 
 async function postman(method, path, { apiKey, body } = {}) {
@@ -564,6 +727,10 @@ async function syncOne(entry, { apiKey, publish, log, env = process.env }) {
     log('  remote already matches the reviewed local file; no PUT issued.');
     return { role: entry.role, action, put: false, verified: true, localHash, remoteHash };
   }
+
+  // ACTION=UPDATE only: show a reviewer WHAT would change, structurally and without values.
+  formatSafeDiff(safeDiff(local, remote), { log });
+
   if (!publish) {
     log('  verify-only run: a PUT would be required. Not issuing it.');
     return { role: entry.role, action, put: false, verified: null, localHash, remoteHash };

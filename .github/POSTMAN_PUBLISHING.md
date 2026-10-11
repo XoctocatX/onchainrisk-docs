@@ -97,7 +97,42 @@ Before any write, for each collection, without secrets:
 The `remote identity` line reports the id and uid the API returned, fingerprinted the same way.
 
 `ACTION = NOOP` means the remote already matches this repository and no write is issued — which
-is the expected result right after a manual Postman update. After a write the run re-reads the
+is the expected result right after a manual Postman update.
+
+On `ACTION = UPDATE` the run additionally prints a **safe structural diff**, so a reviewer can
+answer "what would change if we publish?" before approving a write:
+
+```
+  diff summary (paths only — no values, no ids, no bodies):
+    added   : 2
+    removed : 3
+    changed : 4
+
+    changed paths:
+      info.description
+      item[Analysis].item[POST /api/v1/check].request.description
+      item[Analysis].item[POST /api/v1/check].event[test].script.exec
+```
+
+It reports **paths and categories only**. No old or new value, no request or response body, no
+header or variable value, no id or uid, no hash beyond the two normalized SHAs already shown.
+`ADDED` means publishing would create it, `REMOVED` that publishing would delete it — the local
+file is the target state.
+
+Selectors are semantic where a stable identity exists: folder name, request method plus
+normalized path, example name, event `listen`, header and variable key. Positional indexes are
+used only where neither side has a usable identity — the paid collection genuinely has two
+events with `listen: "test"` on one request, and the strategy is chosen once for the pair so one
+edit never reads as an unrelated add plus remove.
+
+Labels are arbitrary text, so they are not echoed blindly: anything secret-shaped (a `PMAK-`
+key, an `ocr_live_`/`ocr_test_` key, a JWT, a `Bearer …` header, a long hex or base64 blob) is
+replaced by a short fingerprint, and an over-long label is truncated with that fact marked. The
+diagnostic stays useful even if a collection accidentally contains a credential.
+
+It is diagnostic only: it reads the two already-normalized collections and changes nothing about
+target binding, normalization, identity preservation, ambiguity handling, the activation gate,
+the payload or post-write verification. `ACTION = NOOP` prints no diff section at all. After a write the run re-reads the
 collection and reports `POSTMAN_REMOTE_MATCH_LOCAL = YES`; an HTTP 200 on its own is not treated
 as success.
 
