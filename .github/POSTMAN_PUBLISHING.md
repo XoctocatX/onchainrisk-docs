@@ -201,7 +201,7 @@ regenerates them on write; echoing them would be meaningless at best and a stale
 | **collection-level `event`** | `id`, `_postman_id`, `postman_id` | — |
 | **collection-level `event[].script`** | `id`, `_postman_id`, `postman_id` | — |
 | folder / request | `id`, `uid`, `_postman_id`, `postman_id` | `createdAt`, `updatedAt` |
-| response example | `id`, `uid`, `_postman_id`, `postman_id` | `createdAt`, `updatedAt` |
+| response example | `id`, `uid`, `_postman_id`, `postman_id` | `createdAt`, `updatedAt`, `responseTime` |
 | item `event` | `id`, `_postman_id`, `postman_id` | — |
 | item `event[].script` | `id`, `_postman_id`, `postman_id` | — |
 
@@ -224,6 +224,28 @@ refused run, whereas normalizing a field Postman does not own would silently hid
 change. Nothing is stripped by property name alone — a request body, a header, a collection
 variable or a `request` object containing `id`, `uid`, `postman_id`, `createdAt` or `updatedAt`
 keeps it, and a change to it is detected as real drift.
+
+### Postman's serialization of optional fields
+
+Two further differences are Postman's *serializer*, not managed identity, and they are
+canonicalized for comparison only — in `normalizeForCompare`, never in `stripManaged`, so the
+outbound PUT body is unaffected. Nothing is injected and no array is added on the way out.
+
+`responseTime` is the latency Postman recorded when a response example was captured: a fact
+about one historical send, not about the contract. It is modelled at the response-example
+position and nowhere else, so a `responseTime` on an item, on a `request`, inside an example
+*body*, or in any nested business object stays content and changing it is real drift.
+
+`response: []` is what Postman writes on a request with no saved examples, where a hand-authored
+collection simply omits the optional field. Both state "no saved examples", so an absent
+`response` and an empty one compare equal. The rule is narrow in three ways: it applies at the
+request-item position only, it drops only a zero-length array — a non-empty `response` is
+authored content and participates in the comparison and the hash in full — and it only ever
+removes an empty array, never adds one.
+
+Together these were every remaining difference after the first real write: on the paid
+collection, 39 requests with no authored examples plus 19 saved examples, which is exactly the
+58 paths the post-write verification reported before it correctly stopped.
 
 Collection v2.1 allows **root-level events** — collection-wide prerequest/test scripts — and the
 API returns managed ids on them exactly as it does on an item's events. They are matched by

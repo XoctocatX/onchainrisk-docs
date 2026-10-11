@@ -126,7 +126,12 @@ const SERVER_METADATA = {
   collectionInfo: ['owner', 'fork', 'createdAt', 'updatedAt', 'lastUpdatedBy', 'lastRevision'],
   collectionTop: ['_postman_exported_at', '_postman_exported_using'],
   item: ['createdAt', 'updatedAt'],
-  response: ['createdAt', 'updatedAt'],
+  // `responseTime` is the latency Postman recorded when the example was captured — a fact about
+  // one historical send, not about the contract. It is listed HERE, at the saved-example
+  // position, and nowhere else: a `responseTime` inside an example BODY, a request body or any
+  // nested business object is our content and keeps participating in the hash. Being server
+  // metadata rather than identity, it is normalized away for comparison and never echoed back.
+  response: ['createdAt', 'updatedAt', 'responseTime'],
 };
 
 /** Everything Postman owns at a given position = its identity plus its server metadata. */
@@ -208,8 +213,37 @@ export function stripManaged(collection) {
   return c;
 }
 
-/** The comparable content of a collection: ours, with Postman's identity removed. */
-export const normalizeForCompare = (collection) => stripManaged(collection);
+/**
+ * Postman's serializer writes `response: []` on a request that has no saved examples, while a
+ * hand-authored collection simply omits the optional field. Both state "no saved examples", so
+ * they must compare equal — otherwise every example-less request reports permanent drift and no
+ * post-write verification can ever match, which is exactly what stopped the first publish.
+ *
+ * Narrow by construction, in three ways:
+ *   - position: request items only, never a folder and never some other array in the document;
+ *   - emptiness: only a zero-length array is dropped, so a non-empty `response` stays authored
+ *     content and participates in the comparison and the hash in full — including an array whose
+ *     sole example consisted entirely of managed keys and is now `{}`, which is a real
+ *     difference and must still be reported;
+ *   - direction: it removes an empty array, it never adds one.
+ *
+ * Comparison only. It is deliberately NOT part of stripManaged, because injectRemoteIds builds
+ * the outbound payload from stripManaged — so the PUT body is unaffected by this function.
+ */
+function dropEmptyResponseArrays(collection) {
+  for (const { holder, kind } of managedPositions(collection)) {
+    if (kind !== 'item' || Array.isArray(holder.item)) continue;   // requests, not folders
+    if (Array.isArray(holder.response) && holder.response.length === 0) delete holder.response;
+  }
+  return collection;
+}
+
+/**
+ * The comparable content of a collection: ours, with Postman's identity removed and Postman's
+ * optional-field serialization canonicalized. stripManaged already returns a clone, so this
+ * mutates nothing the caller owns.
+ */
+export const normalizeForCompare = (collection) => dropEmptyResponseArrays(stripManaged(collection));
 
 /** Stable, key-order-independent hash of the comparable content. */
 export function contentHash(collection) {

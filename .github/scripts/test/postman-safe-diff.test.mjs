@@ -352,9 +352,12 @@ describe('SAFE_DIFF_NOOP_SILENT and the printing rule', () => {
 });
 
 describe('SAFE_DIFF_DOES_NOT_CHANGE_HASH', () => {
+  // The paid value moved when comparison normalization began canonicalizing Postman's
+  // optional-field serialization: three authored `response: []` arrays are now normalized away.
+  // The collection CONTENT did not change — only what the comparator considers comparable.
   test('both real collections hash to their reviewed canonical values', () => {
     const expected = {
-      'paid-collection.json': 'fe6c1fb5b4f53e8bd9162ee3ec029cf1fff47774b858d0684e86045fdec3b2fc',
+      'paid-collection.json': '9ccc9a578996ae5f547ecbbee564f449dcf43e50b64e433071da0c18b5f4cf93',
       'onchainrisk_sandbox_api_collection.json': 'b1a89ffcbca4c7df72dbbfc291b8bbc7f92f22e359455aa81412dc673c48799f',
     };
     for (const [file, hash] of Object.entries(expected)) {
