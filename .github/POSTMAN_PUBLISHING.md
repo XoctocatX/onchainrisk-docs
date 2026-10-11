@@ -106,8 +106,12 @@ as success.
 Before anything else, the run asserts that the collection it fetched is the one this role is
 allowed to touch: the local file's name, the remote collection's name and a hard-coded
 expectation must all agree, the remote must expose a usable identity, and the configured
-variable must be a representation of that identity (Postman addresses a collection by `id` or by
-the `{owner}-{id}` `uid`; either form of the *same* collection is accepted, nothing else).
+variable must be a representation of that identity. Postman addresses a collection by `id` or by
+the `{owner}-{id}` `uid`. When the remote returns **both**, only an exact match against one of
+them passes — an earlier rule accepted anything ending in `-{id}`, which would have admitted a
+uid carrying someone else's owner prefix. When only one form is returned, the other is derived
+only where its syntax is provable: a uid yields its bare id by dropping the owner prefix, but an
+id alone yields nothing, because an owner prefix cannot be invented.
 
 So swapping the two variables fails instead of overwriting one collection with the other's
 content, and an id pointing at some unrelated editable collection fails too. **The name is a
@@ -122,12 +126,26 @@ therefore modelled by POSITION, not by key name:
 
 | Entity | Managed fields |
 |---|---|
-| collection `info` | `_postman_id`, `uid`, `owner`, `fork`, `createdAt`, `updatedAt`, `lastUpdatedBy`, `lastRevision` |
+| collection `info` | `_postman_id`, `postman_id`, `uid`, `owner`, `fork`, `createdAt`, `updatedAt`, `lastUpdatedBy`, `lastRevision` |
 | collection top level | `_postman_exported_at`, `_postman_exported_using` |
-| folder / request | `id`, `uid`, `_postman_id` |
-| response example | `id`, `uid`, `_postman_id` |
-| event | `id`, `_postman_id` |
-| event script | `id`, `_postman_id` |
+| **collection-level `event`** | `id`, `uid`, `_postman_id`, `postman_id` |
+| **collection-level `event[].script`** | `id`, `uid`, `_postman_id`, `postman_id` |
+| folder / request | `id`, `uid`, `_postman_id`, `postman_id` |
+| response example | `id`, `uid`, `_postman_id`, `postman_id` |
+| item `event` | `id`, `uid`, `_postman_id`, `postman_id` |
+| item `event[].script` | `id`, `uid`, `_postman_id`, `postman_id` |
+
+Collection v2.1 allows **root-level events** — collection-wide prerequest/test scripts — and the
+API returns managed ids on them exactly as it does on an item's events. They are matched by
+`listen`, like any other event list. Omitting those positions would have meant false drift,
+script-id churn and a post-write mismatch the first time a collection-wide script appeared.
+
+**`_postman_id` vs `postman_id`.** The API uses both spellings depending on position and
+endpoint — the export carries `info._postman_id`, while the PUT documentation also refers to
+managed `id`, `uid` and `postman_id` values on structural entities. Both spellings are listed at
+every managed position, and *only* there: a request body or a collection variable that happens to
+contain `"postman_id": "business-data"` keeps it, and that value is part of the content hash, so
+changing it is detected as real drift.
 
 A recursive "delete anything called `id`" would also erase an `id` inside a request body or a
 response example — that is our content, and a change to it must surface rather than be
@@ -144,6 +162,10 @@ body is ever copied back — the local file stays the content authority. A new l
 with no id so Postman mints one; an entity removed locally stays removed; two items sharing a
 stable identity abort the run; and an ambiguous response-example or event name deliberately omits
 just that sub-entity's id, so Postman recreates it rather than having an id guessed for it.
+
+Ambiguity is checked on **both** sides. The remote map drops a duplicated key, and a duplicated
+key in the *local* file also blocks assignment — otherwise one remote id for `listen: "test"`
+would be written onto two local events that both declare it, which is never valid.
 
 ## Failure behaviour
 

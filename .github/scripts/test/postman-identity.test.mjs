@@ -154,12 +154,15 @@ describe('BLOCKER 1 — the role is bound to the remote target', () => {
   });
 
   test('identityConsistent accepts id and uid forms and nothing else', () => {
+    // R2 tightened this: when both forms are known, only an EXACT match passes. The looser rule
+    // this test used to assert ("anything ending in -id") would have admitted a uid carrying
+    // someone else's owner prefix. See postman-collection-level.test.mjs for the full matrix.
     const id = 'aaaa-bbbb';
     const uid = `${OWNER}-${id}`;
     assert.equal(identityConsistent(id, { id, uid }), true);
     assert.equal(identityConsistent(uid, { id, uid }), true);
-    assert.equal(identityConsistent(uid, { id }), true);          // uid of that id
-    assert.equal(identityConsistent(id, { uid }), true);          // bare id of that uid
+    assert.equal(identityConsistent(uid, { id }), false);         // owner prefix is never inferred
+    assert.equal(identityConsistent(id, { uid }), true);          // derivable by dropping the prefix
     assert.equal(identityConsistent('other', { id, uid }), false);
     assert.equal(identityConsistent('', { id, uid }), false);
     assert.equal(identityConsistent(undefined, { id, uid }), false);

@@ -75,14 +75,25 @@ export const COLLECTIONS = [
  * A recursive "delete anything called id" would also erase an `id` inside a request body or a
  * response example, which is our content and must participate in the comparison.
  */
+/*
+ * `_postman_id` vs `postman_id`: the Postman API uses BOTH spellings depending on the position
+ * and the endpoint — the collection export carries `info._postman_id`, while the PUT
+ * documentation also refers to managed `id`, `uid` and `postman_id` values on structural
+ * entities. Both spellings are therefore listed at every managed position, deliberately and by
+ * position. They are NOT stripped by name anywhere else: a content object that happens to carry
+ * `"postman_id": "business-data"` keeps it, and that value participates in the content hash.
+ */
 const MANAGED = {
-  collectionInfo: ['_postman_id', 'uid', 'owner', 'fork', 'createdAt', 'updatedAt', 'lastUpdatedBy', 'lastRevision'],
+  collectionInfo: ['_postman_id', 'postman_id', 'uid', 'owner', 'fork', 'createdAt', 'updatedAt', 'lastUpdatedBy', 'lastRevision'],
   collectionTop: ['_postman_exported_at', '_postman_exported_using'],
-  item: ['id', 'uid', '_postman_id'],
-  response: ['id', 'uid', '_postman_id'],
-  event: ['id', '_postman_id'],
-  eventScript: ['id', '_postman_id'],
+  item: ['id', 'uid', '_postman_id', 'postman_id'],
+  response: ['id', 'uid', '_postman_id', 'postman_id'],
+  event: ['id', 'uid', '_postman_id', 'postman_id'],
+  eventScript: ['id', 'uid', '_postman_id', 'postman_id'],
 };
+
+/** Reserved identity-map key for the collection root (its own event/script identities). */
+export const COLLECTION_ROOT_KEY = 'collection:root';
 
 export class SyncError extends Error {}
 
@@ -109,6 +120,15 @@ function* managedPositions(collection) {
   const c = collection;
   yield { holder: c, keys: MANAGED.collectionTop, kind: 'collection', path: '' };
   if (isObj(c.info)) yield { holder: c.info, keys: MANAGED.collectionInfo, kind: 'info', path: 'info' };
+  // Collection v2.1 allows ROOT-level events — collection-wide prerequest/test scripts — and the
+  // API returns managed ids on them exactly as it does on an item's events. Missing these was
+  // what would have produced false drift, script-id churn and a post-PUT mismatch the first time
+  // a collection-wide script appeared.
+  for (const [j, e] of (c.event ?? []).entries()) {
+    if (!isObj(e)) continue;
+    yield { holder: e, keys: MANAGED.event, kind: 'collectionEvent', path: `event[${j}]` };
+    if (isObj(e.script)) yield { holder: e.script, keys: MANAGED.eventScript, kind: 'collectionEventScript', path: `event[${j}].script` };
+  }
   const walk = (nodes, path) => {
     for (const [i, n] of (nodes ?? []).entries()) {
       if (!isObj(n)) continue;
@@ -209,6 +229,12 @@ export function buildIdentityMap(collection, { label = 'collection' } = {}) {
     }
   };
   walk(c.item, []);
+  // The collection root's own events, matched by `listen` like any other event list. A duplicate
+  // `listen` drops that entry, so the id is omitted rather than guessed.
+  map.set(COLLECTION_ROOT_KEY, {
+    events: subMap(c.event, (e) => String(e.listen ?? ''), MANAGED.event),
+    scripts: subMap(c.event, (e) => String(e.listen ?? ''), MANAGED.eventScript, (e) => e.script),
+  });
   return map;
 }
 
@@ -240,6 +266,26 @@ function subMap(list, keyOf, keys, pick = (x) => x) {
 export function injectRemoteIds(local, remoteIdMap, { remoteInfoIdentity = null } = {}) {
   const out = stripManaged(local);          // clean slate: no local managed ids survive
   const assign = (holder, managed) => { if (managed) for (const [k, v] of Object.entries(managed)) holder[k] = v; };
+
+  /**
+   * Keys that occur exactly once in a LOCAL sub-entity list.
+   *
+   * Ambiguity has to be checked on both sides. The remote map already drops a duplicated key, but
+   * without this the single remote id for `listen: "test"` would be written onto TWO local events
+   * that both declare it — the same managed id on two entities, which is never valid. Caught by
+   * the "a new local root event receives no fabricated id" test.
+   */
+  const unambiguous = (list, keyOf) => {
+    const counts = new Map();
+    for (const x of list ?? []) {
+      if (!isObj(x)) continue;
+      const k = keyOf(x);
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return new Set([...counts.entries()].filter(([, n]) => n === 1).map(([k]) => k));
+  };
+  const byName = (x) => String(x.name ?? '');
+  const byListen = (x) => String(x.listen ?? '');
   const walk = (nodes, ancestry) => {
     for (const n of nodes ?? []) {
       if (!isObj(n)) continue;
@@ -248,17 +294,31 @@ export function injectRemoteIds(local, remoteIdMap, { remoteInfoIdentity = null 
       const hit = remoteIdMap.get(key);
       if (hit) {
         assign(n, hit.item);
-        for (const r of n.response ?? []) if (isObj(r)) assign(r, hit.responses?.get(String(r.name ?? '')));
+        const okResponses = unambiguous(n.response, byName);
+        for (const r of n.response ?? []) {
+          if (isObj(r) && okResponses.has(byName(r))) assign(r, hit.responses?.get(byName(r)));
+        }
+        const okEvents = unambiguous(n.event, byListen);
         for (const e of n.event ?? []) {
-          if (!isObj(e)) continue;
-          assign(e, hit.events?.get(String(e.listen ?? '')));
-          if (isObj(e.script)) assign(e.script, hit.scripts?.get(String(e.listen ?? '')));
+          if (!isObj(e) || !okEvents.has(byListen(e))) continue;
+          assign(e, hit.events?.get(byListen(e)));
+          if (isObj(e.script)) assign(e.script, hit.scripts?.get(byListen(e)));
         }
       }
       if (Array.isArray(n.item)) walk(n.item, here);
     }
   };
   walk(out.item, []);
+  // Root-level events, same rules: ids only, matched by `listen`, nothing guessed.
+  const root = remoteIdMap.get(COLLECTION_ROOT_KEY);
+  if (root) {
+    const okRoot = unambiguous(out.event, byListen);
+    for (const e of out.event ?? []) {
+      if (!isObj(e) || !okRoot.has(byListen(e))) continue;
+      assign(e, root.events?.get(byListen(e)));
+      if (isObj(e.script)) assign(e.script, root.scripts?.get(byListen(e)));
+    }
+  }
   // The PUT schema addresses the collection by its own managed identity. Use the identity the
   // REMOTE returned — not the configured variable, which may be an id or a uid representation.
   if (remoteInfoIdentity && isObj(out.info)) Object.assign(out.info, remoteInfoIdentity);
@@ -268,16 +328,29 @@ export function injectRemoteIds(local, remoteIdMap, { remoteInfoIdentity = null 
 /**
  * Is the configured variable consistent with the identity the remote returned?
  *
- * Postman addresses a collection by id or by uid, where a uid is `{ownerId}-{id}`. Accept either
- * representation of the SAME collection, and nothing else.
+ * Postman addresses a collection by `id` or by `uid`, where a uid is `{ownerId}-{id}`.
+ *
+ * R2 hardening: when the remote supplies BOTH representations, only an exact match against one
+ * of them is accepted. The earlier rule also accepted any string ending in `-${id}`, which would
+ * have admitted a uid carrying someone else's owner prefix. When only one representation is
+ * returned, the other is derived ONLY where its syntax is provable from what was returned: a uid
+ * yields its bare id by dropping the owner prefix, but an id alone yields nothing, because the
+ * owner prefix cannot be invented. This is hardening, not a discovery mechanism.
  */
 export function identityConsistent(configured, { id, uid } = {}) {
   const v = String(configured ?? '');
   if (!v) return false;
-  if (id && v === String(id)) return true;
-  if (uid && v === String(uid)) return true;
-  if (id && v.endsWith(`-${id}`)) return true;        // configured is a uid for this id
-  if (uid && String(uid).endsWith(`-${v}`)) return true;  // configured is the bare id of this uid
+  const rid = id ? String(id) : null;
+  const ruid = uid ? String(uid) : null;
+
+  if (rid && ruid) return v === rid || v === ruid;      // both known: exact match only
+  if (rid) return v === rid;                            // an owner prefix cannot be inferred
+  if (ruid) {
+    if (v === ruid) return true;
+    const sep = ruid.indexOf('-');
+    const derivedId = sep > 0 ? ruid.slice(sep + 1) : null;   // provable: strip the owner prefix
+    return Boolean(derivedId) && v === derivedId;
+  }
   return false;
 }
 
