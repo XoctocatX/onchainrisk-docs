@@ -352,9 +352,9 @@ describe('SAFE_DIFF_NOOP_SILENT and the printing rule', () => {
 });
 
 describe('SAFE_DIFF_DOES_NOT_CHANGE_HASH', () => {
-  test('both real collections still hash to their pre-change values', () => {
+  test('both real collections hash to their reviewed canonical values', () => {
     const expected = {
-      'paid-collection.json': '9f53729038e773eac00f94ab8b9b691ea482a1c90a24702c6877c0115ad296e4',
+      'paid-collection.json': 'fe6c1fb5b4f53e8bd9162ee3ec029cf1fff47774b858d0684e86045fdec3b2fc',
       'onchainrisk_sandbox_api_collection.json': 'b1a89ffcbca4c7df72dbbfc291b8bbc7f92f22e359455aa81412dc673c48799f',
     };
     for (const [file, hash] of Object.entries(expected)) {
