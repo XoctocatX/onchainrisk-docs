@@ -255,7 +255,9 @@ describe('SAFE_DIFF_NO_SECRET_LEAK', () => {
     const long = Array.from({ length: 50 }, (_, i) => `word${i}`).join(' ');
     assert.equal(long.length > 80, true);
     const out = safeLabel(long);
-    assert.match(out, new RegExp(`…<truncated ${long.length}>$`));
+    // R2: a truncated component now carries a fingerprint of the full label, so two long
+    // labels sharing a prefix and a length stay distinguishable as selectors.
+    assert.match(out, new RegExp(`…<truncated ${long.length} sha256:[0-9a-f]{8}>$`));
     assert.equal(out.length < 120, true);
   });
 
@@ -447,15 +449,24 @@ describe('R1 - path-component sanitisation is universal', () => {
     remote.item[0].item[0].request.description = 'drifted';
     const text = out(local, remote);
     assert.equal(text.includes(weird), false);
-    assert.match(text, /<redacted method sha256:[0-9a-f]{8}>/);
+    assert.equal(text.includes(weird.toUpperCase()), false);
+    // R2: a method is now judged by an allowlist, so anything unrecognised — secret-shaped or
+    // merely odd — renders as the method fingerprint rather than a redaction marker.
+    assert.match(text, /<method sha256:[0-9a-f]{8}>/);
   });
 
-  test('a non-secret but implausible method is still not echoed raw', () => {
+  // Superseded by SAFE_DIFF_IMPLAUSIBLE_METHOD_REDACTED in the R2 suite. This assertion was
+  // GREEN FOR THE WRONG REASON: it searched for the lowercase 'rm -rf' after production code had
+  // upper-cased the method, so it passed while 'GET /ETC/PASSWD; RM -RF' was being echoed. The
+  // replacement asserts the absence of both cases and the presence of a fingerprint.
+  test('an implausible method is not echoed raw (both cases checked in the R2 suite)', () => {
     const local = withUrl('{{base_url}}/api/v1/check');
     local.item[0].item[0].request.method = 'GET /etc/passwd; rm -rf';
     const remote = JSON.parse(JSON.stringify(local));
     remote.item[0].item[0].request.description = 'drifted';
-    assert.equal(out(local, remote).includes('rm -rf'), false, 'only a plain verb may render literally');
+    const text = out(local, remote);
+    assert.equal(text.includes('rm -rf'), false);
+    assert.equal(text.includes('RM -RF'), false, 'the upper-cased form must not appear either');
   });
 
   test('SAFE_DIFF_SECRET_OBJECT_KEY_REDACTED', () => {
@@ -569,5 +580,213 @@ describe('R1 - path-component sanitisation is universal', () => {
     assert.match(src, /const method = safeMethod\(node\.request\?\.method\)/);
     assert.match(src, /const path = safePath\(node\.request\?\.url\)/);
     assert.match(src, /const rendered = safeKey\(k\)/);
+  });
+});
+
+
+// R2 - three leaks that survived R1.
+//
+// 1. an implausible method was echoed, because the shape test fell through to a policy that
+//    returns ordinary text literally. My own test was green for the wrong reason: it searched
+//    for the lowercase form after production code had upper-cased it.
+// 2. a control character SPLIT a credential past the secret detector.
+// 3. truncation collapsed two distinct long labels into one selector, pairing separate entities.
+
+describe('R2 - method allowlist, split-secret detection, identity-preserving truncation', () => {
+  const ch = (n) => String.fromCharCode(n);
+  const hasControl = (s) => [...String(s)].some((c) => {
+    const n = c.charCodeAt(0);
+    return n < 32 || (n >= 127 && n <= 159) || n === 0x2028 || n === 0x2029;
+  });
+
+  const withMethod = (method) => ({
+    info: { name: 'C', description: 'prose' },
+    item: [{
+      name: 'Analysis',
+      item: [{ name: 'R', request: { method, url: { raw: '{{base_url}}/api/v1/check' }, description: 'd' }, response: [] }],
+    }],
+  });
+  const lines = (a, b) => {
+    const acc = [];
+    formatSafeDiff(safeDiff(a, b), { log: (l) => acc.push(String(l)) });
+    return acc;
+  };
+  const out = (a, b) => lines(a, b).join(ch(10));
+
+  test('SAFE_DIFF_IMPLAUSIBLE_METHOD_REDACTED', () => {
+    const evil = 'GET /etc/passwd; rm -rf';
+    const local = withMethod(evil);
+    const remote = JSON.parse(JSON.stringify(local));
+    remote.item[0].item[0].request.description = 'drifted';
+    const text = out(local, remote);
+    // neither the original form NOR its upper-case form may appear
+    assert.equal(text.includes(evil), false, 'the raw method must not appear');
+    assert.equal(text.includes(evil.toUpperCase()), false, 'nor its upper-case form');
+    assert.equal(text.includes('rm -rf'), false);
+    assert.equal(text.includes('RM -RF'), false);
+    assert.equal(text.includes('/etc/passwd'), false);
+    assert.equal(text.includes('/ETC/PASSWD'), false);
+    assert.match(text, /<method sha256:[0-9a-f]{8}>/, 'a fingerprinted method marker must be present');
+  });
+
+  test('safeMethod renders only accepted verbs literally', () => {
+    for (const m of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'TRACE',
+      'CONNECT', 'COPY', 'LINK', 'UNLINK', 'PURGE', 'LOCK', 'UNLOCK', 'PROPFIND', 'VIEW']) {
+      assert.equal(safeMethod(m), m, `${m} is a real method and must read literally`);
+      assert.equal(safeMethod(m.toLowerCase()), m, 'case is normalised, not a reason to redact');
+    }
+    assert.equal(safeMethod(''), '');
+  });
+
+  test('anything not on the allowlist is fingerprinted, deterministically', () => {
+    const odd = ['BREW', 'X-CUSTOM', 'GET POST', 'GET;DROP', 'g'.repeat(12), 'GET /a b'];
+    for (const m of odd) {
+      const r = safeMethod(m);
+      assert.match(r, /^<method sha256:[0-9a-f]{8}>$/, `${m} must be fingerprinted`);
+      assert.equal(r.includes(m), false);
+      assert.equal(r.includes(m.toUpperCase()), false);
+      assert.equal(r, safeMethod(m), 'same input, same fingerprint');
+    }
+    // distinct odd methods stay distinguishable
+    assert.notEqual(safeMethod('BREW'), safeMethod('X-CUSTOM'));
+  });
+
+  test('SAFE_DIFF_CONTROL_SPLIT_SECRET_REDACTED', () => {
+    const splits = [
+      ['PMAK', `PMAK-ABC${ch(9)}DEF0123456789`, 'DEF0123456789'],
+      ['PMAK newline', `PMAK-ABC${ch(10)}DEF0123456789`, 'DEF0123456789'],
+      ['ocr_live', `${['ocr', 'live'].join('_')}_ABC${ch(9)}DEF0123456789abc`, 'DEF0123456789abc'],
+      ['ocr_test c0', `${['ocr', 'test'].join('_')}_ABC${ch(1)}DEF0123456789abc`, 'DEF0123456789abc'],
+      ['jwt', `ey${ch(0)}J0ZXN0Ijoibm90LWEtcmVhbC10b2tlbiJ9`, 'J0ZXN0Ijoibm90LWEtcmVhbC10b2tlbiJ9'],
+    ];
+    for (const [label, split, fragment] of splits) {
+      const direct = safeComponent(split);
+      assert.match(direct, /^<redacted label sha256:[0-9a-f]{8}>$/, `${label}: must be fully redacted`);
+      assert.equal(direct.includes(fragment), false, `${label}: a credential fragment leaked`);
+      assert.equal(direct.includes('PMAK'), false, `${label}: the prefix leaked`);
+    }
+  });
+
+  test('a control-split secret is caught through real path surfaces, not just the policy', () => {
+    const split = `PMAK-ABC${ch(9)}DEF0123456789`;
+    const fragment = 'DEF0123456789';
+
+    // 1. a URL path segment
+    const urlLocal = {
+      info: { name: 'C' },
+      item: [{ name: 'F', item: [{ name: 'R', request: { method: 'GET', url: { raw: `{{base_url}}/api/${split}/x` }, description: 'a' }, response: [] }] }],
+    };
+    const urlRemote = JSON.parse(JSON.stringify(urlLocal));
+    urlRemote.item[0].item[0].request.description = 'b';
+    const urlText = out(urlLocal, urlRemote);
+    assert.equal(urlText.includes(fragment), false, 'URL segment leaked a fragment');
+    assert.match(urlText, /<redacted path segment sha256:[0-9a-f]{8}>/);
+
+    // 2. a semantic label (folder name)
+    const nameLocal = { info: { name: 'C' }, item: [{ name: split, item: [], description: 'a' }] };
+    const nameRemote = JSON.parse(JSON.stringify(nameLocal));
+    nameRemote.item[0].description = 'b';
+    const nameText = out(nameLocal, nameRemote);
+    assert.equal(nameText.includes(fragment), false, 'folder name leaked a fragment');
+    assert.match(nameText, /<redacted folder name sha256:[0-9a-f]{8}>/);
+
+    // 3. an object property key
+    const keyLocal = { info: { name: 'C' }, item: [{ name: 'F', item: [] }] };
+    const keyRemote = JSON.parse(JSON.stringify(keyLocal));
+    keyRemote.item[0][split] = 'v';
+    const keyText = out(keyLocal, keyRemote);
+    assert.equal(keyText.includes(fragment), false, 'object key leaked a fragment');
+
+    // 4. a response-example name
+    const exLocal = {
+      info: { name: 'C' },
+      item: [{ name: 'F', item: [{ name: 'R', request: { method: 'GET', url: { raw: '{{base_url}}/api/x' } }, response: [{ name: split, code: 200, body: '{}' }] }] }],
+    };
+    const exRemote = JSON.parse(JSON.stringify(exLocal));
+    exRemote.item[0].item[0].response[0].code = 201;
+    const exText = out(exLocal, exRemote);
+    assert.equal(exText.includes(fragment), false, 'example name leaked a fragment');
+  });
+
+  test('a genuinely separated pair of words is not treated as one split token', () => {
+    // control-to-space canonicalisation keeps two real words apart, so an ordinary two-word
+    // label is still readable rather than redacted as if it were a split credential
+    const label = `Reports${ch(9)}Folder`;
+    assert.equal(safeComponent(label), 'Reports·Folder');
+    assert.equal(hasControl(safeComponent(label)), false);
+  });
+
+  test('SAFE_DIFF_TRUNCATED_COMPONENT_UNIQUE', () => {
+    const shared = 'Customer Reports Folder For The European Region Quarterly Compliance Review Set ';
+    assert.equal(shared.length, 80, 'the shared prefix must fill the readable window exactly');
+    const a = `${shared}north-region`;
+    const b = `${shared}south-region`;
+    assert.equal(a.length, b.length, 'equal total length');
+    assert.equal(a.slice(0, 80), b.slice(0, 80), 'identical first 80 characters');
+    const ra = safeComponent(a);
+    const rb = safeComponent(b);
+    assert.notEqual(ra, rb, 'distinct long labels must render distinctly');
+    assert.match(ra, /…<truncated 92 sha256:[0-9a-f]{8}>$/);
+    assert.equal(ra, safeComponent(a), 'deterministic across calls');
+    // the readable prefix is still there, and the differing suffix is not exposed
+    assert.match(ra, /^Customer Reports Folder/);
+    assert.equal(ra.includes('north-region'), false);
+    assert.equal(rb.includes('south-region'), false);
+  });
+
+  test('SAFE_DIFF_LONG_SEMANTIC_IDENTITY_CORRECT', () => {
+    const shared = 'Customer Reports Folder For The European Region Quarterly Compliance Review Set ';
+    const a = `${shared}north-region`;
+    const b = `${shared}south-region`;
+    const mk = (name, description) => ({ info: { name: 'C' }, item: [{ name, item: [], description }] });
+    const d = safeDiff(mk(a, 'local-only folder'), mk(b, 'remote-only folder'));
+    // a local-only entity is ADDED, a remote-only entity is REMOVED — never a nested CHANGED
+    assert.equal(d.added.length, 1, `added: ${JSON.stringify(d)}`);
+    assert.equal(d.removed.length, 1, `removed: ${JSON.stringify(d)}`);
+    assert.deepEqual(d.changed, [], 'distinct entities must not be paired as one');
+    assert.notEqual(d.added[0], d.removed[0], 'the two selectors must differ');
+    const text = [...d.added, ...d.removed].join(' ');
+    assert.equal(text.includes('north-region'), false);
+    assert.equal(text.includes('south-region'), false);
+  });
+
+  test('short labels are untouched by the truncation change', () => {
+    for (const label of ['Analysis', 'Token', 'Block / MEV', 'Public Share Links (no auth)']) {
+      assert.equal(safeComponent(label), label);
+      assert.equal(safeComponent(label).includes('truncated'), false);
+    }
+  });
+
+  test('a long label containing a secret is redacted whole, never partially exposed', () => {
+    const secret = ['PMAK', 'INSUFFIX0123456789ab'].join('-');
+    const label = `${'Quarterly Compliance Review Set For The European Region And Beyond '}${secret}`;
+    assert.equal(label.length > 80, true);
+    const r = safeComponent(label);
+    assert.match(r, /^<redacted label sha256:[0-9a-f]{8}>$/);
+    assert.equal(r.includes('PMAK'), false);
+    assert.equal(r.includes('Quarterly'), false, 'redaction wins over truncation');
+  });
+
+  test('the shipped collections still render with no fingerprinted component', () => {
+    for (const entry of COLLECTIONS) {
+      const local = readLocal(entry.file);
+      const remote = JSON.parse(JSON.stringify(local));
+      remote.info.description = 'drifted';
+      const walk = (nodes) => {
+        for (const x of nodes ?? []) {
+          if (x.request) x.request.description = 'drifted';
+          for (const r of x.response ?? []) r.code = 599;
+          if (x.item) walk(x.item);
+        }
+      };
+      walk(remote.item);
+      const all = Object.values(safeDiff(local, remote)).flat();
+      assert.equal(all.length > 0, true);
+      for (const p of all) {
+        for (const marker of ['<key ', '<redacted', '<no ', '<method ', 'truncated']) {
+          assert.equal(p.includes(marker), false, `${entry.file}: unexpected ${marker} in ${p}`);
+        }
+      }
+    }
   });
 });

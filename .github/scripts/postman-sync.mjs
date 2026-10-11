@@ -514,9 +514,34 @@ const fp = (raw) => createHash('sha256').update(raw).digest('hex').slice(0, 8);
 export function safeComponent(value, { kind = 'label' } = {}) {
   const raw = value === undefined || value === null ? '' : String(value);
   if (!raw) return `<no ${kind}>`;
-  if (SECRET_SHAPED.some((re) => re.test(raw))) return `<redacted ${kind} sha256:${fp(raw)}>`;
+
+  /*
+   * R2: a control character must not be able to SPLIT a credential past the detector. A key
+   * whose prefix is separated from its body by a TAB matches no secret shape as written, yet
+   * the neutralised render would have printed the two halves joined by a placeholder — nearly
+   * the whole token. (The literal form is not written here, so the repository secret-shape scan
+   * stays meaningful; see the split fixtures in the tests.) So every shape is
+   * tested against three canonical forms: the raw text, the text with control characters
+   * removed (which rejoins a split token), and with them turned into spaces (which keeps two
+   * genuinely separate words apart). Only the neutralised safe form is ever rendered; no
+   * reconstructed canonical form is printed.
+   */
+  const candidates = [raw, raw.replace(CONTROL_CHARS, ''), raw.replace(CONTROL_CHARS, ' ')];
+  if (SECRET_SHAPED.some((re) => candidates.some((c) => re.test(c)))) {
+    return `<redacted ${kind} sha256:${fp(raw)}>`;
+  }
+
   const tame = raw.replace(CONTROL_CHARS, '·');
-  if (tame.length > LABEL_MAX) return `${tame.slice(0, LABEL_MAX)}…<truncated ${tame.length}>`;
+  if (tame.length > LABEL_MAX) {
+    /*
+     * R2: a truncated component is also a SEMANTIC SELECTOR, so it has to stay unique. Two
+     * labels sharing their first LABEL_MAX characters and their total length rendered
+     * identically, which paired two distinct folders as one entity and turned a real
+     * remove-plus-add into a misleading nested CHANGED. The fingerprint of the full component
+     * restores identity while still exposing only the readable prefix.
+     */
+    return `${tame.slice(0, LABEL_MAX)}…<truncated ${tame.length} sha256:${fp(raw)}>`;
+  }
   return tame;
 }
 
@@ -565,11 +590,29 @@ export function safePath(url) {
     .join('/');
 }
 
-/** An HTTP method is not assumed trustworthy either. */
+/**
+ * Methods a Postman collection can legitimately carry — HTTP plus the WebDAV verbs Postman
+ * offers in its method picker. This is an ALLOWLIST on purpose.
+ *
+ * R2: the previous shape test `/^[A-Z]{3,10}$/` fell through to safeComponent(), which returns
+ * ordinary non-secret text literally — so `GET /etc/passwd; rm -rf` was echoed as
+ * `GET /ETC/PASSWD; RM -RF`. Worse, my own test passed because it searched for the lowercase
+ * form after production code had upper-cased it: green for the wrong reason. Anything not on
+ * this list is now fingerprinted and never rendered.
+ */
+const KNOWN_METHODS = new Set([
+  'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'TRACE', 'CONNECT',
+  'COPY', 'LINK', 'UNLINK', 'PURGE', 'LOCK', 'UNLOCK', 'PROPFIND', 'PROPPATCH',
+  'MKCOL', 'MOVE', 'REPORT', 'SEARCH', 'VIEW',
+]);
+
+/** An HTTP method is not assumed trustworthy: only an accepted verb renders literally. */
 export function safeMethod(method) {
-  const raw = String(method ?? '').toUpperCase();
+  const raw = String(method ?? '');
   if (!raw) return '';
-  return /^[A-Z]{3,10}$/.test(raw) ? raw : safeComponent(raw, { kind: 'method' });
+  const upper = raw.toUpperCase();
+  if (KNOWN_METHODS.has(upper)) return upper;
+  return `<method sha256:${fp(raw)}>`;
 }
 
 /** A folder is identified by name; a request by method plus normalized path. */

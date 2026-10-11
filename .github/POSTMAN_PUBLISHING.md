@@ -129,12 +129,21 @@ edit never reads as an unrelated add plus remove.
 names, the HTTP method, each URL path segment, example names, event `listen`, header / variable /
 query keys, and object property keys. Nothing relies on a caller remembering to call it.
 
-- anything secret-shaped (a `PMAK-` key, an `ocr_live_`/`ocr_test_` key, a JWT, a `Bearer …`
-  header, a long hex or base64 blob) becomes a short deterministic fingerprint;
+- anything secret-shaped (a Postman API key, an `ocr_live_`/`ocr_test_` key, a JWT, a
+  `Bearer …` header, a long hex or base64 blob) becomes a short deterministic fingerprint. Each
+  shape is tested against three canonical forms — the raw text, the text with control characters
+  removed, and with them turned into spaces — so a credential split by a tab cannot slip past
+  the detector while two genuinely separate words stay readable;
 - control characters — C0, DEL, C1 and the Unicode line separators — are replaced with a visible
-  placeholder, so a name cannot forge a log line or emit a terminal escape. They are neutralised
-  *before* truncation or redaction, so splitting a credential with a tab smuggles nothing past;
-- an over-long component is truncated with that fact marked;
+  placeholder, so a name cannot forge a log line or emit a terminal escape;
+- an over-long component keeps its readable prefix and gains both its true length and a
+  fingerprint of the whole value. The fingerprint is not cosmetic: a rendered label is also a
+  semantic array selector, and without it two labels sharing their first 80 characters and their
+  total length collapsed into one selector — pairing two distinct folders and turning a real
+  remove-plus-add into a misleading nested `CHANGED`;
+- an HTTP method renders literally only if it is on an explicit allowlist (the HTTP verbs plus
+  the WebDAV ones Postman offers). Anything else becomes `<method sha256:…>`; a shape test is not
+  enough, because an odd-but-not-secret method would otherwise be echoed;
 - a URL path is sanitised segment by segment, so one bad segment is redacted on its own and
   `POST /api/v1/check` stays readable;
 - property keys from the Collection v2.1 schema render literally, and any other key is
