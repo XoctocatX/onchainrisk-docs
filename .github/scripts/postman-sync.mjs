@@ -83,29 +83,68 @@ export const COLLECTIONS = [
  * position. They are NOT stripped by name anywhere else: a content object that happens to carry
  * `"postman_id": "business-data"` keeps it, and that value participates in the content hash.
  */
-const MANAGED = {
-  // The export carries `info._postman_id`; the PUT documentation also cites `postman_id`; `uid`,
-  // `owner`, `fork` and the timestamps are server metadata present on API responses.
-  collectionInfo: ['_postman_id', 'postman_id', 'uid', 'owner', 'fork', 'createdAt', 'updatedAt', 'lastUpdatedBy', 'lastRevision'],
-  collectionTop: ['_postman_exported_at', '_postman_exported_using'],
+/*
+ * R4 splits what Postman owns into two kinds, because they are handled differently.
+ *
+ * IDENTITY — the handles Postman assigns to an entity. Normalized out of the comparison AND
+ *   preserved into the outbound payload, because a full replacement that omits an existing id
+ *   makes Postman delete and recreate that entity.
+ *
+ * SERVER_METADATA — values the server generates about an entity: timestamps, ownership,
+ *   revision counters. Normalized out of the comparison but NEVER sent back. Postman regenerates
+ *   them on write, so echoing them would be meaningless at best and a stale claim at worst.
+ *
+ * MANAGED (= IDENTITY + SERVER_METADATA per position) is what normalization strips.
+ */
+const IDENTITY = {
+  // The export carries `info._postman_id`; the PUT documentation also cites `postman_id`.
+  collectionInfo: ['_postman_id', 'postman_id', 'uid'],
   // v2.1 documents `id` on items; the API returns `uid` on items; PUT cites `postman_id`.
   item: ['id', 'uid', '_postman_id', 'postman_id'],
   // A response example likewise comes back with both `id` and `uid`.
   response: ['id', 'uid', '_postman_id', 'postman_id'],
   // R3 position-aware review: v2.1 documents `id` on event and script objects and the PUT
   // documentation cites `postman_id`, but neither the schema nor any response we model carries a
-  // `uid` at these positions, so the speculative `uid` added in R2 is removed. Erring this way is
-  // the safe direction — an unmodelled managed field surfaces as loud drift and a failed run,
+  // `uid` at these positions, so the speculative `uid` added in R2 was removed. Erring this way
+  // is the safe direction — an unmodelled managed field surfaces as loud drift and a failed run,
   // whereas normalizing a field Postman does not own there would silently hide content changes.
   event: ['id', '_postman_id', 'postman_id'],
   eventScript: ['id', '_postman_id', 'postman_id'],
 };
 
+/**
+ * Server-generated metadata, normalized for comparison and deliberately NOT echoed back.
+ *
+ * R4: a current GET returns `createdAt` / `updatedAt` on folders, requests and response examples
+ * as well as on the collection. Neither checked-in collection carries them structurally (the
+ * four `createdAt` strings in the paid collection are inside response-example BODIES, which is
+ * our content), so every ordinary GET differed from the canonical file purely by server
+ * timestamps — a false ACTION=UPDATE, and then a post-PUT verification that could never match
+ * because the verifying GET added them again.
+ */
+const SERVER_METADATA = {
+  collectionInfo: ['owner', 'fork', 'createdAt', 'updatedAt', 'lastUpdatedBy', 'lastRevision'],
+  collectionTop: ['_postman_exported_at', '_postman_exported_using'],
+  item: ['createdAt', 'updatedAt'],
+  response: ['createdAt', 'updatedAt'],
+};
+
+/** Everything Postman owns at a given position = its identity plus its server metadata. */
+const MANAGED = Object.fromEntries(
+  [...new Set([...Object.keys(IDENTITY), ...Object.keys(SERVER_METADATA)])].map((kind) => [
+    kind,
+    [...new Set([...(IDENTITY[kind] ?? []), ...(SERVER_METADATA[kind] ?? [])])],
+  ]),
+);
+
 /** Info-level identity representations that may be restored into a PUT payload. */
-const INFO_IDENTITY_KEYS = ['_postman_id', 'postman_id', 'uid'];
+const INFO_IDENTITY_KEYS = IDENTITY.collectionInfo;
 
 /** Reserved identity-map key for the collection root (its own event/script identities). */
 export const COLLECTION_ROOT_KEY = 'collection:root';
+
+/** Exported for tests: what is preserved vs merely normalized, per position. */
+export const MANAGED_FIELDS = { IDENTITY, SERVER_METADATA, MANAGED };
 
 export class SyncError extends Error {}
 
@@ -231,11 +270,12 @@ export function buildIdentityMap(collection, { label = 'collection' } = {}) {
         );
       }
       seen.set(key, name);
+      // IDENTITY only — server metadata is normalized away but never echoed back.
       map.set(key, {
-        item: pickManaged(n, MANAGED.item),
-        responses: subMap(n.response, (r) => String(r.name ?? ''), MANAGED.response),
-        events: subMap(n.event, (e) => String(e.listen ?? ''), MANAGED.event),
-        scripts: subMap(n.event, (e) => String(e.listen ?? ''), MANAGED.eventScript, (e) => e.script),
+        item: pickManaged(n, IDENTITY.item),
+        responses: subMap(n.response, (r) => String(r.name ?? ''), IDENTITY.response),
+        events: subMap(n.event, (e) => String(e.listen ?? ''), IDENTITY.event),
+        scripts: subMap(n.event, (e) => String(e.listen ?? ''), IDENTITY.eventScript, (e) => e.script),
       });
       if (Array.isArray(n.item)) walk(n.item, here);
     }
@@ -244,8 +284,8 @@ export function buildIdentityMap(collection, { label = 'collection' } = {}) {
   // The collection root's own events, matched by `listen` like any other event list. A duplicate
   // `listen` drops that entry, so the id is omitted rather than guessed.
   map.set(COLLECTION_ROOT_KEY, {
-    events: subMap(c.event, (e) => String(e.listen ?? ''), MANAGED.event),
-    scripts: subMap(c.event, (e) => String(e.listen ?? ''), MANAGED.eventScript, (e) => e.script),
+    events: subMap(c.event, (e) => String(e.listen ?? ''), IDENTITY.event),
+    scripts: subMap(c.event, (e) => String(e.listen ?? ''), IDENTITY.eventScript, (e) => e.script),
   });
   return map;
 }

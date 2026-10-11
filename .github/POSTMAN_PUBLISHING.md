@@ -124,23 +124,46 @@ Postman's full-collection replacement deletes and recreates any entity whose id 
 which would churn the ids that deep links and attached resources depend on. Managed identity is
 therefore modelled by POSITION, not by key name:
 
-| Entity | Managed fields |
-|---|---|
-| collection `info` | `_postman_id`, `postman_id`, `uid`, `owner`, `fork`, `createdAt`, `updatedAt`, `lastUpdatedBy`, `lastRevision` |
-| collection top level | `_postman_exported_at`, `_postman_exported_using` |
-| **collection-level `event`** | `id`, `_postman_id`, `postman_id` |
-| **collection-level `event[].script`** | `id`, `_postman_id`, `postman_id` |
-| folder / request | `id`, `uid`, `_postman_id`, `postman_id` |
-| response example | `id`, `uid`, `_postman_id`, `postman_id` |
-| item `event` | `id`, `_postman_id`, `postman_id` |
-| item `event[].script` | `id`, `_postman_id`, `postman_id` |
+Two kinds are handled differently:
 
-Each variant is listed only where it is deliberately treated as managed. v2.1 documents `id` on
+**Identity** — the handles Postman assigns. Normalized out of the comparison *and* preserved into
+the outbound payload, because a replacement that omits an existing id makes Postman delete and
+recreate that entity.
+
+**Server metadata** — values the server generates *about* an entity: timestamps, ownership,
+revision counters. Normalized out of the comparison and **never sent back**, because Postman
+regenerates them on write; echoing them would be meaningless at best and a stale claim at worst.
+
+| Entity | Identity (normalized + preserved) | Server metadata (normalized, never sent) |
+|---|---|---|
+| collection `info` | `_postman_id`, `postman_id`, `uid` | `owner`, `fork`, `createdAt`, `updatedAt`, `lastUpdatedBy`, `lastRevision` |
+| collection top level | — | `_postman_exported_at`, `_postman_exported_using` |
+| **collection-level `event`** | `id`, `_postman_id`, `postman_id` | — |
+| **collection-level `event[].script`** | `id`, `_postman_id`, `postman_id` | — |
+| folder / request | `id`, `uid`, `_postman_id`, `postman_id` | `createdAt`, `updatedAt` |
+| response example | `id`, `uid`, `_postman_id`, `postman_id` | `createdAt`, `updatedAt` |
+| item `event` | `id`, `_postman_id`, `postman_id` | — |
+| item `event[].script` | `id`, `_postman_id`, `postman_id` | — |
+
+A current GET returns `createdAt` / `updatedAt` on folders, requests and response examples as
+well as on the collection. Neither checked-in collection carries them structurally — the four
+`createdAt` strings in the paid collection are inside response-example *bodies*, which is our
+content — so before they were modelled, every ordinary GET differed from the canonical file
+purely by server timestamps: a false `ACTION=UPDATE`, and then a post-write verification that
+could never match, because the verifying GET added them again. Timestamps are deliberately *not*
+modelled on events or scripts, where the API does not return them.
+
+Each field is listed only where it is deliberately treated as managed. v2.1 documents `id` on
 event and script objects and the PUT documentation cites `postman_id`, but neither the schema nor
 any response modelled here carries a `uid` at those positions, so `uid` is **not** normalized
-there — a `uid` appearing on an event is treated as content, and changing it is real drift. That
-is the safe direction to err: an unmodelled managed field surfaces as a loud failure, whereas
-normalizing a field Postman does not own would silently hide a content change.
+there — a `uid` appearing on an event is treated as content, and changing it is real drift. The
+same reasoning keeps timestamps off event and script positions.
+
+That is the safe direction to err: an unmodelled managed field surfaces as a loud failure and a
+refused run, whereas normalizing a field Postman does not own would silently hide a content
+change. Nothing is stripped by property name alone — a request body, a header, a collection
+variable or a `request` object containing `id`, `uid`, `postman_id`, `createdAt` or `updatedAt`
+keeps it, and a change to it is detected as real drift.
 
 Collection v2.1 allows **root-level events** — collection-wide prerequest/test scripts — and the
 API returns managed ids on them exactly as it does on an item's events. They are matched by
