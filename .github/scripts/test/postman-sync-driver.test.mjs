@@ -25,6 +25,7 @@ function stubFetch({ mutate = null, putStatus = 200, afterPut = null } = {}) {
     const alreadyPut = calls.some((c) => c.method === 'PUT' && c.url === String(url));
     const body = { collection: JSON.parse(JSON.stringify(local)) };
     body.collection.info._postman_id = paid ? 'paid-cloud-id' : 'sandbox-cloud-id';
+    body.collection.info.uid = `99999-${paid ? 'paid-cloud-id' : 'sandbox-cloud-id'}`;
     body.collection.info.updatedAt = '2026-01-01T00:00:00Z';
     if (alreadyPut && afterPut) afterPut(body);
     else if (!alreadyPut && mutate) mutate(body);
@@ -43,6 +44,7 @@ beforeEach(() => {
   process.env.POSTMAN_PAID_COLLECTION_ID = 'paid-cloud-id';
   process.env.POSTMAN_SANDBOX_COLLECTION_ID = 'sandbox-cloud-id';
   process.env.GITHUB_SHA = 'deadbeefcafe';
+  process.env.POSTMAN_AUTOPUBLISH_ENABLED = 'true';   // disabled-state behaviour has its own tests
 });
 afterEach(() => {
   globalThis.fetch = realFetch;
@@ -50,6 +52,7 @@ afterEach(() => {
   delete process.env.POSTMAN_PAID_COLLECTION_ID;
   delete process.env.POSTMAN_SANDBOX_COLLECTION_ID;
   delete process.env.GITHUB_SHA;
+  delete process.env.POSTMAN_AUTOPUBLISH_ENABLED;
 });
 
 describe('the publication decision is auditable before any write', () => {
@@ -73,6 +76,7 @@ describe('the publication decision is auditable before any write', () => {
     assert.match(out, /role {17}: sandbox/);
     assert.match(out, /repository sha {7}: deadbeefcafe/);
     assert.match(out, /configured id {8}: len=13 sha256:[0-9a-f]{8} …d-id/);
+    assert.match(out, /autopublish enabled {2}: true/);
     assert.equal(out.includes(DUMMY_KEY), false, 'the key must never appear in output');
     assert.equal(out.includes('paid-cloud-id'), false, 'the full configured id is fingerprinted, not echoed');
   });
@@ -129,7 +133,7 @@ describe('the publication decision is auditable before any write', () => {
     stubFetch();
     delete process.env.POSTMAN_PAID_COLLECTION_ID;
     await assert.rejects(run(['--verify']), (e) => /POSTMAN_PAID_COLLECTION_ID is not set/.test(e.message)
-      && /NOT a cloud ID/.test(e.message));
+      && /NOT a cloud id/i.test(e.message));
   });
 
   test('an error message carrying the key is redacted', async () => {
@@ -146,5 +150,48 @@ describe('the publication decision is auditable before any write', () => {
     assert.equal(calls.length, 0);
     assert.match(out, /OnChainRisk Paid API/);
     assert.match(out, /OnChainRisk Sandbox API/);
+  });
+});
+
+
+describe('the activation gate blocks writing end to end', () => {
+  test('publish mode refuses before any request when activation is unset', async () => {
+    stubFetch({ mutate: (b) => { b.collection.item[0].name = 'Drifted'; } });
+    delete process.env.POSTMAN_AUTOPUBLISH_ENABLED;
+    await assert.rejects(run(['--publish']), (e) => /requires POSTMAN_AUTOPUBLISH_ENABLED=true/.test(e.message));
+    assert.equal(calls.length, 0, 'not even a GET may be issued');
+  });
+
+  for (const value of ['false', 'TRUE', '1', 'yes', '']) {
+    test(`publish mode refuses when activation is ${JSON.stringify(value)}`, async () => {
+      stubFetch({ mutate: (b) => { b.collection.item[0].name = 'Drifted'; } });
+      process.env.POSTMAN_AUTOPUBLISH_ENABLED = value;
+      await assert.rejects(run(['--publish']), /POSTMAN_AUTOPUBLISH_ENABLED/);
+      assert.equal(calls.some((c) => c.method === 'PUT'), false);
+    });
+  }
+
+  test('verify mode stays usable while activation is disabled', async () => {
+    stubFetch({ mutate: (b) => { b.collection.item[0].name = 'Drifted'; } });
+    delete process.env.POSTMAN_AUTOPUBLISH_ENABLED;
+    const { out } = await run(['--verify']);
+    assert.match(out, /ACTION {15}: UPDATE/);
+    assert.match(out, /autopublish enabled {2}: no \(POSTMAN_AUTOPUBLISH_ENABLED=\(unset\)\)/);
+    assert.equal(calls.some((c) => c.method === 'PUT'), false);
+    assert.equal(calls.filter((c) => c.method === 'GET').length, 2);
+  });
+
+  test('a swapped configuration aborts with zero PUT', async () => {
+    // paid variable resolving to the sandbox collection
+    calls = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ method: init?.method ?? 'GET', url: String(url) });
+      const l = readLocal('onchainrisk_sandbox_api_collection.json');   // wrong collection for this role
+      const b = { collection: JSON.parse(JSON.stringify(l)) };
+      b.collection.info._postman_id = 'paid-cloud-id';
+      return new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    await assert.rejects(run(['--publish']), (e) => /may only update "OnChainRisk Paid API"/.test(e.message));
+    assert.equal(calls.filter((c) => c.method === 'PUT').length, 0, 'PUT_COUNT must be 0');
   });
 });

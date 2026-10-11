@@ -97,7 +97,7 @@ describe('2 — meaningful remote drift is NOT normalized away', () => {
 describe('3 — a matching request keeps its remote ID in the outbound payload', () => {
   test('ids are injected for folder, request and response example', () => {
     const map = buildIdentityMap(remoteish());
-    const out = injectRemoteIds(localish(), map, { remoteCollectionId: 'cloud-abc' });
+    const out = injectRemoteIds(localish(), map, { remoteInfoIdentity: { _postman_id: 'cloud-abc' } });
     assert.equal(out.item[0].id, 'f-1');
     assert.equal(out.item[0].item[0].id, 'r-1');
     assert.equal(out.item[0].item[1].id, 'r-2');
@@ -105,7 +105,7 @@ describe('3 — a matching request keeps its remote ID in the outbound payload',
   });
 
   test('the API payload addresses the cloud collection, but content stays local', () => {
-    const out = injectRemoteIds(localish(), buildIdentityMap(remoteish()), { remoteCollectionId: 'cloud-abc' });
+    const out = injectRemoteIds(localish(), buildIdentityMap(remoteish()), { remoteInfoIdentity: { _postman_id: 'cloud-abc' } });
     assert.equal(out.info._postman_id, 'cloud-abc');
     assert.equal(out.info.description, 'local prose');
   });
@@ -113,7 +113,7 @@ describe('3 — a matching request keeps its remote ID in the outbound payload',
   test('the checked-in file is not mutated by building a payload', () => {
     const local = localish();
     const before = JSON.stringify(local);
-    injectRemoteIds(local, buildIdentityMap(remoteish()), { remoteCollectionId: 'cloud-abc' });
+    injectRemoteIds(local, buildIdentityMap(remoteish()), { remoteInfoIdentity: { _postman_id: 'cloud-abc' } });
     assert.equal(JSON.stringify(local), before);
   });
 });
@@ -122,7 +122,7 @@ describe('4 — a new local request receives no fabricated ID', () => {
   test('an item with no remote counterpart carries no id', () => {
     const local = localish();
     local.item[0].item.push({ name: 'DELETE thing', request: { method: 'DELETE', url: { raw: '{{base_url}}/api/v1/thing' } } });
-    const out = injectRemoteIds(local, buildIdentityMap(remoteish()), { remoteCollectionId: 'cloud-abc' });
+    const out = injectRemoteIds(local, buildIdentityMap(remoteish()), { remoteInfoIdentity: { _postman_id: 'cloud-abc' } });
     const added = out.item[0].item.find((x) => x.name === 'DELETE thing');
     assert.equal('id' in added, false);
     assert.equal('_postman_id' in added, false);
@@ -132,7 +132,9 @@ describe('4 — a new local request receives no fabricated ID', () => {
     const local = localish();
     local.item[0].item.push({ name: 'NEW', id: 'invented-locally', request: { method: 'PUT', url: { raw: '{{base_url}}/api/v1/new' } } });
     const out = injectRemoteIds(local, buildIdentityMap(remoteish()), {});
-    assert.equal('id' in out.item[0].item.find((x) => x.name === 'NEW'), false);
+    const added = out.item[0].item.find((x) => x.name === 'NEW');
+    assert.equal('id' in added, false);
+    assert.equal(JSON.stringify(out).includes('invented-locally'), false);
   });
 });
 
@@ -190,7 +192,7 @@ describe('8 — remote content can never overwrite local content', () => {
     remote.collection.item[0].item[0].request.description = 'remote request prose';
     remote.collection.item[0].item[0].event = [{ listen: 'test', script: { exec: ['remote()'] } }];
     remote.collection.item[0].item[0].request.auth = { type: 'basic' };
-    const out = injectRemoteIds(localish(), buildIdentityMap(remote), { remoteCollectionId: 'cloud-abc' });
+    const out = injectRemoteIds(localish(), buildIdentityMap(remote), { remoteInfoIdentity: { _postman_id: 'cloud-abc' } });
     const s = JSON.stringify(out);
     assert.equal(out.info.description, 'local prose');
     assert.equal(s.includes('REMOTE EDITED PROSE'), false);
@@ -341,7 +343,7 @@ describe('both real checked-in collections', () => {
       let n = 0;
       const assign = (nodes) => { for (const x of nodes ?? []) { x.id = `id-${n++}`; if (Array.isArray(x.item)) assign(x.item); for (const r of x.response ?? []) r.id = `ex-${n++}`; } };
       assign(withIds.item);
-      const out = injectRemoteIds(local, buildIdentityMap(withIds), { remoteCollectionId: 'cloud-x' });
+      const out = injectRemoteIds(local, buildIdentityMap(withIds), { remoteInfoIdentity: { _postman_id: 'cloud-x' } });
       assert.equal(contentHash(out), contentHash(local), 'injecting ids must not change content');
       assert.equal(semanticallyEqual(out, withIds), true);
     });

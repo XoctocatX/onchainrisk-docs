@@ -17,9 +17,23 @@
 #                                              collections below, and nothing else
 #   variable  POSTMAN_PAID_COLLECTION_ID       the Postman CLOUD id of "OnChainRisk Paid API"
 #   variable  POSTMAN_SANDBOX_COLLECTION_ID    the Postman CLOUD id of "OnChainRisk Sandbox API"
+#   variable  POSTMAN_AUTOPUBLISH_ENABLED      the activation kill switch — see below
 #
 # The `_postman_id` values inside the checked-in files are collection-document identifiers and
 # are NOT cloud ids. The script refuses to guess one.
+#
+# ACTIVATION. Nothing can be written until POSTMAN_AUTOPUBLISH_ENABLED is EXACTLY the string
+# 'true'. Unset, empty, 'false', 'TRUE', '1' and 'yes' all leave publication disabled, and the
+# gate is enforced twice over — in the job condition below and again inside the script, so
+# editing one does not silently enable writes. The read-only `verify` dispatch stays available
+# the whole time, which is how the first real target is inspected:
+#
+#   1. merge this workflow to main with POSTMAN_AUTOPUBLISH_ENABLED unset
+#   2. configure the secret and the two collection-id variables
+#   3. run workflow_dispatch -> mode: verify, and read the reported target identities,
+#      normalized hashes and ACTION
+#   4. only after that result is independently accepted, set POSTMAN_AUTOPUBLISH_ENABLED=true
+#   5. then authorize a publish dispatch, or let the next reviewed collection change publish
 
 name: Publish Postman collections
 
@@ -88,9 +102,11 @@ jobs:
 
   publish:
     name: Publish to Postman
-    # Never from a pull request, and never from a ref other than main.
+    # Never from a pull request, never from a ref other than main, and never while the
+    # activation variable is anything other than the exact string 'true'.
     if: >-
       github.ref == 'refs/heads/main' &&
+      vars.POSTMAN_AUTOPUBLISH_ENABLED == 'true' &&
       (github.event_name == 'push' ||
        (github.event_name == 'workflow_dispatch' && inputs.mode == 'publish'))
     needs: validate
@@ -107,10 +123,13 @@ jobs:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_PAID_COLLECTION_ID: ${{ vars.POSTMAN_PAID_COLLECTION_ID }}
           POSTMAN_SANDBOX_COLLECTION_ID: ${{ vars.POSTMAN_SANDBOX_COLLECTION_ID }}
+          POSTMAN_AUTOPUBLISH_ENABLED: ${{ vars.POSTMAN_AUTOPUBLISH_ENABLED }}
         run: node .github/scripts/postman-sync.mjs --publish
 
   verify-only:
     name: Verify against Postman (read-only)
+    # Deliberately NOT gated on POSTMAN_AUTOPUBLISH_ENABLED: inspecting the real targets while
+    # publication is still disabled is the whole point of the activation sequence.
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.mode == 'verify'
     needs: validate
     runs-on: ubuntu-latest
@@ -126,4 +145,5 @@ jobs:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_PAID_COLLECTION_ID: ${{ vars.POSTMAN_PAID_COLLECTION_ID }}
           POSTMAN_SANDBOX_COLLECTION_ID: ${{ vars.POSTMAN_SANDBOX_COLLECTION_ID }}
+          POSTMAN_AUTOPUBLISH_ENABLED: ${{ vars.POSTMAN_AUTOPUBLISH_ENABLED }}
         run: node .github/scripts/postman-sync.mjs --verify
