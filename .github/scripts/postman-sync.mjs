@@ -84,13 +84,25 @@ export const COLLECTIONS = [
  * `"postman_id": "business-data"` keeps it, and that value participates in the content hash.
  */
 const MANAGED = {
+  // The export carries `info._postman_id`; the PUT documentation also cites `postman_id`; `uid`,
+  // `owner`, `fork` and the timestamps are server metadata present on API responses.
   collectionInfo: ['_postman_id', 'postman_id', 'uid', 'owner', 'fork', 'createdAt', 'updatedAt', 'lastUpdatedBy', 'lastRevision'],
   collectionTop: ['_postman_exported_at', '_postman_exported_using'],
+  // v2.1 documents `id` on items; the API returns `uid` on items; PUT cites `postman_id`.
   item: ['id', 'uid', '_postman_id', 'postman_id'],
+  // A response example likewise comes back with both `id` and `uid`.
   response: ['id', 'uid', '_postman_id', 'postman_id'],
-  event: ['id', 'uid', '_postman_id', 'postman_id'],
-  eventScript: ['id', 'uid', '_postman_id', 'postman_id'],
+  // R3 position-aware review: v2.1 documents `id` on event and script objects and the PUT
+  // documentation cites `postman_id`, but neither the schema nor any response we model carries a
+  // `uid` at these positions, so the speculative `uid` added in R2 is removed. Erring this way is
+  // the safe direction — an unmodelled managed field surfaces as loud drift and a failed run,
+  // whereas normalizing a field Postman does not own there would silently hide content changes.
+  event: ['id', '_postman_id', 'postman_id'],
+  eventScript: ['id', '_postman_id', 'postman_id'],
 };
+
+/** Info-level identity representations that may be restored into a PUT payload. */
+const INFO_IDENTITY_KEYS = ['_postman_id', 'postman_id', 'uid'];
 
 /** Reserved identity-map key for the collection root (its own event/script identities). */
 export const COLLECTION_ROOT_KEY = 'collection:root';
@@ -238,20 +250,50 @@ export function buildIdentityMap(collection, { label = 'collection' } = {}) {
   return map;
 }
 
-/** Managed ids of sub-entities, keyed by a name; an ambiguous key is dropped entirely. */
-function subMap(list, keyOf, keys, pick = (x) => x) {
-  const out = new Map();
-  const dupes = new Set();
+/**
+ * Structural keys that occur EXACTLY ONCE in a sub-entity list.
+ *
+ * R3: multiplicity is computed over the whole list before any identity is looked at. The
+ * previous implementation only noticed a duplicate when an EARLIER occurrence had already
+ * inserted an id, so this remote shape was accepted as unambiguous:
+ *
+ *     [ { listen: 'test', script: {...} },                     // no managed id
+ *       { listen: 'test', id: 'event-2', script: { id: 'script-2' } } ]
+ *
+ * The first occurrence contributed nothing, so the second looked like the only one and its ids
+ * were retained — guessing identity across an ambiguous key. It was order-dependent too: the
+ * reverse order correctly refused. Presence of an id, presence of a script, and list order are
+ * now all irrelevant to the ambiguity decision.
+ *
+ * One shared implementation serves response names, item-event `listen` and root-event `listen`,
+ * on both the remote and the local side.
+ */
+export function unambiguousKeys(list, keyOf) {
+  const counts = new Map();
   for (const entry of list ?? []) {
     if (!isObj(entry)) continue;
     const k = keyOf(entry);
-    if (out.has(k)) { dupes.add(k); continue; }
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return new Set([...counts.entries()].filter(([, n]) => n === 1).map(([k]) => k));
+}
+
+/**
+ * Managed ids of sub-entities, keyed by a structural name. A key occurring more than once in the
+ * list yields NO mapping at all — decided first, by unambiguousKeys above.
+ */
+function subMap(list, keyOf, keys, pick = (x) => x) {
+  const out = new Map();
+  const allowed = unambiguousKeys(list, keyOf);
+  for (const entry of list ?? []) {
+    if (!isObj(entry)) continue;
+    const k = keyOf(entry);
+    if (!allowed.has(k)) continue;              // ambiguous structural key: never mapped
     const target = pick(entry);
     if (!isObj(target)) continue;
     const managed = pickManaged(target, keys);
     if (managed) out.set(k, managed);
   }
-  for (const d of dupes) out.delete(d);
   return out;
 }
 
@@ -268,22 +310,12 @@ export function injectRemoteIds(local, remoteIdMap, { remoteInfoIdentity = null 
   const assign = (holder, managed) => { if (managed) for (const [k, v] of Object.entries(managed)) holder[k] = v; };
 
   /**
-   * Keys that occur exactly once in a LOCAL sub-entity list.
-   *
-   * Ambiguity has to be checked on both sides. The remote map already drops a duplicated key, but
-   * without this the single remote id for `listen: "test"` would be written onto TWO local events
-   * that both declare it — the same managed id on two entities, which is never valid. Caught by
-   * the "a new local root event receives no fabricated id" test.
+   * Ambiguity is checked on BOTH sides, with the same shared helper. The remote map already
+   * refuses a duplicated key; without this the single remote id for `listen: "test"` would be
+   * written onto TWO local events that both declare it — the same managed id on two entities,
+   * which is never valid.
    */
-  const unambiguous = (list, keyOf) => {
-    const counts = new Map();
-    for (const x of list ?? []) {
-      if (!isObj(x)) continue;
-      const k = keyOf(x);
-      counts.set(k, (counts.get(k) ?? 0) + 1);
-    }
-    return new Set([...counts.entries()].filter(([, n]) => n === 1).map(([k]) => k));
-  };
+  const unambiguous = unambiguousKeys;
   const byName = (x) => String(x.name ?? '');
   const byListen = (x) => String(x.listen ?? '');
   const walk = (nodes, ancestry) => {
@@ -390,7 +422,12 @@ export function assertTargetBinding({ entry, local, remote, configuredId }) {
       + `Refusing to write to a target that does not match its configuration.`,
     );
   }
-  return { id, uid, remoteInfoIdentity: pickManaged(info, ['_postman_id', 'uid']) };
+  // R3: `postman_id` is accepted for binding above, so it must also be RESTORED into the
+  // payload. injectRemoteIds() starts from stripManaged(local), so anything omitted here is
+  // simply absent — a remote whose identity is represented only by info.postman_id bound
+  // successfully and was then sent without it. Exact remote values only: nothing is synthesized
+  // and no other info field is carried over.
+  return { id, uid, remoteInfoIdentity: pickManaged(info, INFO_IDENTITY_KEYS) };
 }
 
 /** The activation kill switch. Exactly 'true' enables writing; anything else does not. */

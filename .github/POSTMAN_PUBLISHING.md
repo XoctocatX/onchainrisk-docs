@@ -128,12 +128,19 @@ therefore modelled by POSITION, not by key name:
 |---|---|
 | collection `info` | `_postman_id`, `postman_id`, `uid`, `owner`, `fork`, `createdAt`, `updatedAt`, `lastUpdatedBy`, `lastRevision` |
 | collection top level | `_postman_exported_at`, `_postman_exported_using` |
-| **collection-level `event`** | `id`, `uid`, `_postman_id`, `postman_id` |
-| **collection-level `event[].script`** | `id`, `uid`, `_postman_id`, `postman_id` |
+| **collection-level `event`** | `id`, `_postman_id`, `postman_id` |
+| **collection-level `event[].script`** | `id`, `_postman_id`, `postman_id` |
 | folder / request | `id`, `uid`, `_postman_id`, `postman_id` |
 | response example | `id`, `uid`, `_postman_id`, `postman_id` |
-| item `event` | `id`, `uid`, `_postman_id`, `postman_id` |
-| item `event[].script` | `id`, `uid`, `_postman_id`, `postman_id` |
+| item `event` | `id`, `_postman_id`, `postman_id` |
+| item `event[].script` | `id`, `_postman_id`, `postman_id` |
+
+Each variant is listed only where it is deliberately treated as managed. v2.1 documents `id` on
+event and script objects and the PUT documentation cites `postman_id`, but neither the schema nor
+any response modelled here carries a `uid` at those positions, so `uid` is **not** normalized
+there — a `uid` appearing on an event is treated as content, and changing it is real drift. That
+is the safe direction to err: an unmodelled managed field surfaces as a loud failure, whereas
+normalizing a field Postman does not own would silently hide a content change.
 
 Collection v2.1 allows **root-level events** — collection-wide prerequest/test scripts — and the
 API returns managed ids on them exactly as it does on an item's events. They are matched by
@@ -163,9 +170,17 @@ with no id so Postman mints one; an entity removed locally stays removed; two it
 stable identity abort the run; and an ambiguous response-example or event name deliberately omits
 just that sub-entity's id, so Postman recreates it rather than having an id guessed for it.
 
-Ambiguity is checked on **both** sides. The remote map drops a duplicated key, and a duplicated
-key in the *local* file also blocks assignment — otherwise one remote id for `listen: "test"`
-would be written onto two local events that both declare it, which is never valid.
+Ambiguity is checked on **both** sides, by one shared helper, and the decision is made from
+structural multiplicity alone — before any identity is looked at. Whether an occurrence happens
+to carry an id, whether only one of two events has a script, and what order the list is in are
+all irrelevant: a key appearing twice yields no mapping at all. A duplicated key in the *local*
+file also blocks assignment, since otherwise one remote id for `listen: "test"` would be written
+onto two local events that both declare it, which is never valid.
+
+Collection-level identity is restored in whichever representations the remote actually supplied —
+`_postman_id`, `postman_id`, `uid` — using the exact remote values. A collection whose identity
+comes back only as `info.postman_id` round-trips with that field intact and nothing invented
+alongside it.
 
 ## Failure behaviour
 
