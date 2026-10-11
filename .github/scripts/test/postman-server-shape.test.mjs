@@ -119,7 +119,10 @@ describe('the managed-field model separates identity from server metadata', () =
 
   test('nested timestamps are modelled as server metadata at item and response level', () => {
     assert.deepEqual(SERVER_METADATA.item, ['createdAt', 'updatedAt']);
-    assert.deepEqual(SERVER_METADATA.response, ['createdAt', 'updatedAt']);
+    // The response position also carries `responseTime`, which is not a timestamp and is not
+    // this test's subject; postman-canonicalization.test.mjs owns the exhaustive pin on that
+    // list. Here the claim is only that both timestamps are modelled.
+    for (const k of ['createdAt', 'updatedAt']) assert.equal(SERVER_METADATA.response.includes(k), true, k);
     assert.equal(MANAGED.item.includes('createdAt'), true);
     assert.equal(MANAGED.response.includes('updatedAt'), true);
   });
