@@ -1,0 +1,129 @@
+# Publish the reviewed Postman collections in this repository to Postman cloud.
+#
+# AUTHORITY. The checked-in JSON is the publication source. It arrives by mirror sync from
+# XoctocatX/onchainrisk, which already gates OpenAPI <-> Postman conformance, so this workflow
+# never regenerates a collection from OpenAPI and never treats Postman as a source of truth:
+#
+#     CORE canonical -> production served artifacts -> this mirror -> Postman cloud
+#
+# TRUST MODEL. A pull request runs validation ONLY and has no access to the publishing
+# credential — the publish job is gated on `github.event_name` and on the ref being main, and
+# `pull_request_target` is deliberately not used, so no secret-bearing step ever executes
+# against an untrusted ref. Publication is additionally narrowed by a path filter: editing the
+# README, the CHANGELOG, an integration doc or this workflow does not republish anything.
+#
+# REQUIRED REPOSITORY CONFIGURATION (set once, by a maintainer):
+#   secret    POSTMAN_API_KEY                  a Postman API key with update rights on the two
+#                                              collections below, and nothing else
+#   variable  POSTMAN_PAID_COLLECTION_ID       the Postman CLOUD id of "OnChainRisk Paid API"
+#   variable  POSTMAN_SANDBOX_COLLECTION_ID    the Postman CLOUD id of "OnChainRisk Sandbox API"
+#
+# The `_postman_id` values inside the checked-in files are collection-document identifiers and
+# are NOT cloud ids. The script refuses to guess one.
+
+name: Publish Postman collections
+
+on:
+  pull_request:
+    paths:
+      - 'paid-collection.json'
+      - 'onchainrisk_sandbox_api_collection.json'
+      - '.github/workflows/publish-postman.yml'
+      - '.github/scripts/**'
+  push:
+    branches: [main]
+    # Publication path filter: ONLY a change to a published collection republishes.
+    paths:
+      - 'paid-collection.json'
+      - 'onchainrisk_sandbox_api_collection.json'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'verify = read-only comparison. publish = write when the remote differs.'
+        required: true
+        default: verify
+        type: choice
+        options: [verify, publish]
+
+# Read-only. Publication writes to Postman, never to this repository.
+permissions:
+  contents: read
+
+# One publication at a time, and never interrupted: cancelling between the PUT and its
+# verification would leave the remote state unconfirmed.
+concurrency:
+  group: postman-publish
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate collections (no secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the ref under test
+        # actions/checkout v4, pinned to its immutable commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Node version floor
+        run: |
+          node --version
+          node -e 'const [maj] = process.versions.node.split("."); if (Number(maj) < 20) { console.error("Node 20+ required"); process.exit(1); }'
+
+      - name: Both collections parse and carry unambiguous identities
+        run: node .github/scripts/postman-sync.mjs --selftest
+
+      - name: Publisher unit tests
+        run: node --test ".github/scripts/test/*.test.mjs"
+
+      - name: No secret-shaped material committed
+        run: |
+          if grep -rEn 'PMAK-[A-Za-z0-9]{8,}|eyJ[A-Za-z0-9_-]{20,}|ocr_(live|test|sandbox)_[A-Za-z0-9]{12,}' \
+               --include='*.json' --include='*.md' --include='*.mjs' --include='*.yml' . ; then
+            echo "secret-shaped material found — see matches above" >&2
+            exit 1
+          fi
+          echo "clean"
+
+  publish:
+    name: Publish to Postman
+    # Never from a pull request, and never from a ref other than main.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.mode == 'publish'))
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: postman
+    steps:
+      - name: Check out main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Publish, then verify the remote matches this repository
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+          POSTMAN_PAID_COLLECTION_ID: ${{ vars.POSTMAN_PAID_COLLECTION_ID }}
+          POSTMAN_SANDBOX_COLLECTION_ID: ${{ vars.POSTMAN_SANDBOX_COLLECTION_ID }}
+        run: node .github/scripts/postman-sync.mjs --publish
+
+  verify-only:
+    name: Verify against Postman (read-only)
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.mode == 'verify'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: postman
+    steps:
+      - name: Check out main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Report NOOP/UPDATE without writing
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+          POSTMAN_PAID_COLLECTION_ID: ${{ vars.POSTMAN_PAID_COLLECTION_ID }}
+          POSTMAN_SANDBOX_COLLECTION_ID: ${{ vars.POSTMAN_SANDBOX_COLLECTION_ID }}
+        run: node .github/scripts/postman-sync.mjs --verify
