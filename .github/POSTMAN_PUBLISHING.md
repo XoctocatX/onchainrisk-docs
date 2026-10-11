@@ -125,10 +125,26 @@ used only where neither side has a usable identity — the paid collection genui
 events with `listen: "test"` on one request, and the strategy is chosen once for the pair so one
 edit never reads as an unrelated add plus remove.
 
-Labels are arbitrary text, so they are not echoed blindly: anything secret-shaped (a `PMAK-`
-key, an `ocr_live_`/`ocr_test_` key, a JWT, a `Bearer …` header, a long hex or base64 blob) is
-replaced by a short fingerprint, and an over-long label is truncated with that fact marked. The
-diagnostic stays useful even if a collection accidentally contains a credential.
+**Every** externally-derived path component goes through one safety policy — folder and request
+names, the HTTP method, each URL path segment, example names, event `listen`, header / variable /
+query keys, and object property keys. Nothing relies on a caller remembering to call it.
+
+- anything secret-shaped (a `PMAK-` key, an `ocr_live_`/`ocr_test_` key, a JWT, a `Bearer …`
+  header, a long hex or base64 blob) becomes a short deterministic fingerprint;
+- control characters — C0, DEL, C1 and the Unicode line separators — are replaced with a visible
+  placeholder, so a name cannot forge a log line or emit a terminal escape. They are neutralised
+  *before* truncation or redaction, so splitting a credential with a tab smuggles nothing past;
+- an over-long component is truncated with that fact marked;
+- a URL path is sanitised segment by segment, so one bad segment is redacted on its own and
+  `POST /api/v1/check` stays readable;
+- property keys from the Collection v2.1 schema render literally, and any other key is
+  fingerprinted — an extension field's *name* can itself be sensitive, and the renderer must not
+  decide that by looking at it.
+
+Every line the formatter emits is exactly one line, so "no control character in any emitted
+line" is a property the caller can rely on. A test asserts that a realistic diff of the two
+shipped collections contains no fingerprinted component at all, so readability is not traded
+away to satisfy the safety rules.
 
 It is diagnostic only: it reads the two already-normalized collections and changes nothing about
 target binding, normalization, identity preservation, ambiguity handling, the activation gate,

@@ -9,7 +9,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  safeDiff, formatSafeDiff, safeLabel, contentHash, readLocal, COLLECTIONS,
+  safeDiff, formatSafeDiff, safeLabel, safeComponent, safeKey, safePath, safeMethod,
+  contentHash, readLocal, COLLECTIONS,
 } from '../postman-sync.mjs';
 
 const base = () => ({
@@ -390,5 +391,183 @@ describe('SAFE_DIFF_DOES_NOT_CHANGE_HASH', () => {
       assert.equal(contentHash(local), contentHash(managedOnly), `${entry.file} must be a NOOP`);
       assert.deepEqual(safeDiff(local, managedOnly), { added: [], removed: [], changed: [] });
     }
+  });
+});
+
+
+// R1 - EVERY path component goes through one safety policy.
+//
+// Three surfaces previously bypassed the renderer: the normalized URL path, the HTTP method, and
+// arbitrary object property keys. Each could put a credential, or a forged log line, into an
+// Actions log. Secret-shaped fixtures are assembled at run time so the repository secret-shape
+// scan stays meaningful, and control characters are produced with String.fromCharCode, so this
+// file holds no literal control byte.
+
+describe('R1 - path-component sanitisation is universal', () => {
+  const SECRET_PATH_SEG = ['PMAK', 'URLSEGMENT0123456789'].join('-');
+  const SECRET_KEY = ['ocr', 'live', 'OBJECTKEY0123456789abc'].join('_');
+  const ch = (n) => String.fromCharCode(n);
+
+  /** True if any character could forge a log line or drive a terminal. */
+  const hasControl = (s) => [...String(s)].some((c) => {
+    const n = c.charCodeAt(0);
+    return n < 32 || (n >= 127 && n <= 159) || n === 0x2028 || n === 0x2029;
+  });
+
+  const withUrl = (raw) => ({
+    info: { name: 'C', description: 'prose' },
+    item: [{
+      name: 'Analysis',
+      item: [{ name: 'R', request: { method: 'POST', url: { raw }, description: 'd' }, response: [] }],
+    }],
+  });
+
+  const lines = (a, b) => {
+    const acc = [];
+    formatSafeDiff(safeDiff(a, b), { log: (l) => acc.push(String(l)) });
+    return acc;
+  };
+  const out = (a, b) => lines(a, b).join(ch(10));
+
+  test('SAFE_DIFF_SECRET_IN_URL_PATH_REDACTED', () => {
+    const local = withUrl(`{{base_url}}/api/${SECRET_PATH_SEG}/x`);
+    const remote = withUrl(`{{base_url}}/api/${SECRET_PATH_SEG}/x`);
+    remote.item[0].item[0].request.description = 'drifted';
+    const text = out(local, remote);
+    assert.equal(text.includes(SECRET_PATH_SEG), false, 'the secret path segment must not appear');
+    assert.match(text, /<redacted path segment sha256:[0-9a-f]{8}>/);
+    assert.match(text, /POST \/api\/<redacted path segment sha256:[0-9a-f]{8}>\/x/);
+  });
+
+  test('a secret-shaped HTTP method is redacted too', () => {
+    const weird = ['PMAK', 'METHOD0123456789abcd'].join('-');
+    const local = withUrl('{{base_url}}/api/v1/check');
+    local.item[0].item[0].request.method = weird;
+    const remote = JSON.parse(JSON.stringify(local));
+    remote.item[0].item[0].request.description = 'drifted';
+    const text = out(local, remote);
+    assert.equal(text.includes(weird), false);
+    assert.match(text, /<redacted method sha256:[0-9a-f]{8}>/);
+  });
+
+  test('a non-secret but implausible method is still not echoed raw', () => {
+    const local = withUrl('{{base_url}}/api/v1/check');
+    local.item[0].item[0].request.method = 'GET /etc/passwd; rm -rf';
+    const remote = JSON.parse(JSON.stringify(local));
+    remote.item[0].item[0].request.description = 'drifted';
+    assert.equal(out(local, remote).includes('rm -rf'), false, 'only a plain verb may render literally');
+  });
+
+  test('SAFE_DIFF_SECRET_OBJECT_KEY_REDACTED', () => {
+    const local = withUrl('{{base_url}}/api/v1/check');
+    const remote = JSON.parse(JSON.stringify(local));
+    remote.item[0].item[0].request[SECRET_KEY] = 'value';
+    const text = out(local, remote);
+    assert.equal(text.includes(SECRET_KEY), false, 'a secret-shaped property key must not appear');
+    assert.match(text, /<key sha256:[0-9a-f]{8}>/);
+  });
+
+  test('SAFE_DIFF_UNKNOWN_OBJECT_KEY_SAFE', () => {
+    const local = withUrl('{{base_url}}/api/v1/check');
+    const remote = JSON.parse(JSON.stringify(local));
+    remote.item[0].item[0].request.customerInternalFieldName = 'value';
+    const text = out(local, remote);
+    assert.equal(text.includes('customerInternalFieldName'), false, 'an unknown key is fingerprinted, not echoed');
+    assert.match(text, /request\.<key sha256:[0-9a-f]{8}>/);
+  });
+
+  test('safeKey is literal for schema keys and fingerprinted otherwise, deterministically', () => {
+    for (const k of ['info', 'description', 'request', 'response', 'body', 'script', 'exec', 'header', 'variable']) {
+      assert.equal(safeKey(k), k, `${k} is schema structure and should read literally`);
+    }
+    for (const k of ['somethingArbitrary', SECRET_KEY, 'X-Customer-Field']) {
+      const a = safeKey(k);
+      assert.match(a, /^<key sha256:[0-9a-f]{8}>$/);
+      assert.equal(a, safeKey(k), 'same key, same fingerprint');
+      assert.equal(a.includes(k), false);
+    }
+  });
+
+  test('SAFE_DIFF_CONTROL_CHARS_SAFE', () => {
+    const payloads = [
+      `line1${ch(10)}INJECTED-LINE`,
+      `line1${ch(13)}${ch(10)}INJECTED-LINE`,
+      `tab${ch(9)}here`,
+      `${ch(27)}[31mANSI-RED${ch(27)}[0m`,
+      `sep${ch(0x2028)}INJECTED-LINE`,
+      `nul${ch(0)}byte`,
+      `bell${ch(7)}here`,
+      `del${ch(127)}char`,
+      `c1${ch(0x9b)}next`,
+    ];
+    for (const [i, payload] of payloads.entries()) {
+      const local = withUrl('{{base_url}}/api/v1/check');
+      const remote = JSON.parse(JSON.stringify(local));
+      remote.item[0].name = payload;
+      const emitted = lines(local, remote);
+      for (const line of emitted) {
+        assert.equal(hasControl(line), false, `payload ${i} left a control character in the output`);
+        assert.equal(/^\s*(INJECTED-LINE|ANSI-RED)/.test(line), false, `payload ${i} forged a log line`);
+      }
+    }
+  });
+
+  test('control characters are neutralised before truncation or redaction can hide them', () => {
+    assert.equal(hasControl(safeComponent(`a${ch(10)}b`)), false);
+    assert.equal(safeComponent(`a${ch(10)}b`).length, 3, 'the newline becomes one visible placeholder');
+    assert.equal(hasControl(safeComponent(`x${ch(10)}${'y '.repeat(60)}`)), false);
+    const split = ['PMAK', 'SPLITKEY0123456789ab'].join('-');
+    assert.match(safeComponent(`${split}${ch(10)}`), /^<redacted label sha256:[0-9a-f]{8}>$/);
+  });
+
+  test('SAFE_DIFF_NORMAL_ROUTE_READABLE', () => {
+    const local = withUrl('{{base_url}}/api/v1/check');
+    const remote = JSON.parse(JSON.stringify(local));
+    remote.item[0].item[0].request.description = 'drifted';
+    const text = out(local, remote);
+    assert.match(text, /item\[Analysis\]\.item\[POST \/api\/v1\/check\]\.request\.description/);
+    assert.equal(text.includes('<key'), false, 'a normal route needs no fingerprints');
+    assert.equal(text.includes('<redacted'), false);
+  });
+
+  test('safePath and safeMethod keep ordinary routes readable', () => {
+    assert.equal(safePath({ raw: '{{base_url}}/api/labels/{{sample_label_id}}' }), '/api/labels/{var}');
+    assert.equal(safePath({ raw: '{{base_url}}/api/v1/check?network=eth' }), '/api/v1/check');
+    assert.equal(safePath({ raw: '' }), '');
+    assert.equal(safeMethod('post'), 'POST');
+    assert.equal(safeMethod(''), '');
+  });
+
+  test('the REAL collections render with no fingerprinted component at all', () => {
+    for (const entry of COLLECTIONS) {
+      const local = readLocal(entry.file);
+      const remote = JSON.parse(JSON.stringify(local));
+      remote.info.description = 'drifted';
+      const walk = (nodes) => {
+        for (const x of nodes ?? []) {
+          if (x.request) x.request.description = 'drifted';
+          for (const r of x.response ?? []) r.code = 599;
+          if (x.item) walk(x.item);
+        }
+      };
+      walk(remote.item);
+      const d = safeDiff(local, remote);
+      const all = [...d.added, ...d.removed, ...d.changed];
+      assert.equal(all.length > 0, true, `${entry.file} should show drift`);
+      for (const p of all) {
+        assert.equal(p.includes('<key '), false, `${entry.file}: unexpected fingerprinted key in ${p}`);
+        assert.equal(p.includes('<redacted'), false, `${entry.file}: unexpected redaction in ${p}`);
+        assert.equal(p.includes('<no '), false, `${entry.file}: unexpected empty label in ${p}`);
+        assert.equal(hasControl(p), false, `${entry.file}: control char in ${p}`);
+      }
+    }
+  });
+
+  test('the renderer no longer reaches a raw method, path or key', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../postman-sync.mjs', import.meta.url), 'utf8');
+    assert.match(src, /const method = safeMethod\(node\.request\?\.method\)/);
+    assert.match(src, /const path = safePath\(node\.request\?\.url\)/);
+    assert.match(src, /const rendered = safeKey\(k\)/);
   });
 });

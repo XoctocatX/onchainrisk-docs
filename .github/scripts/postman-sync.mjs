@@ -495,46 +495,102 @@ const SECRET_SHAPED = [
 
 const LABEL_MAX = 80;
 
+/** C0, DEL, C1 and the Unicode line separators: anything that could forge a log line. */
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+
+const fp = (raw) => createHash('sha256').update(raw).digest('hex').slice(0, 8);
+
 /**
- * Render a structural label safely.
+ * THE one path-component safety policy. Every externally-derived component that can reach
+ * formatSafeDiff() goes through this — folder and request names, HTTP method, each URL path
+ * segment, example names, event `listen`, header / variable / query keys, and object property
+ * keys. R1: three surfaces previously bypassed it (the URL path, the method, and arbitrary
+ * object keys), each of which could put a credential or a forged log line into an Actions log.
  *
- * Collection, folder, request and response names, HTTP methods, normalized URL paths, event
- * `listen` values and header/variable keys are ordinary public structure, so they are shown as
- * they are. But a label is still arbitrary text: if a collection ever carried a credential in a
- * name, blindly echoing it here would leak it into a review artifact. Anything secret-shaped is
- * replaced by a short fingerprint, and over-long labels are truncated with the fact marked.
+ * Order matters. Control characters are neutralised first so a newline cannot escape the line
+ * even if the rest of the label is later redacted or truncated; the secret check then runs on
+ * the ORIGINAL text, so splitting a credential with a tab does not smuggle it past.
  */
-export function safeLabel(value, { kind = 'label' } = {}) {
+export function safeComponent(value, { kind = 'label' } = {}) {
   const raw = value === undefined || value === null ? '' : String(value);
   if (!raw) return `<no ${kind}>`;
-  if (SECRET_SHAPED.some((re) => re.test(raw))) {
-    return `<redacted ${kind} sha256:${createHash('sha256').update(raw).digest('hex').slice(0, 8)}>`;
-  }
-  if (raw.length > LABEL_MAX) {
-    return `${raw.slice(0, LABEL_MAX)}…<truncated ${raw.length}>`;
-  }
-  return raw;
+  if (SECRET_SHAPED.some((re) => re.test(raw))) return `<redacted ${kind} sha256:${fp(raw)}>`;
+  const tame = raw.replace(CONTROL_CHARS, '·');
+  if (tame.length > LABEL_MAX) return `${tame.slice(0, LABEL_MAX)}…<truncated ${tame.length}>`;
+  return tame;
+}
+
+/** Retained name for the same policy; `safeLabel` is what the earlier tests call. */
+export const safeLabel = safeComponent;
+
+/**
+ * Property names from the Collection v2.1 schema and the collection API, which are structure
+ * rather than content and so are readable as they are. Anything NOT on this list is arbitrary
+ * — an extension field, or user data — and is fingerprinted instead of echoed.
+ */
+const KNOWN_KEYS = new Set([
+  'info', 'name', 'description', 'schema', 'version', 'variable', 'item', 'event', 'auth',
+  'protocolProfileBehavior', '_postman_id', 'postman_id', 'uid', 'owner', 'fork', 'createdAt',
+  'updatedAt', 'lastUpdatedBy', 'lastRevision', '_postman_exported_at', '_postman_exported_using',
+  'request', 'response', 'method', 'url', 'header', 'headers', 'body', 'raw', 'mode', 'options',
+  'urlencoded', 'formdata', 'file', 'graphql', 'src', 'disabled', 'key', 'value', 'type', 'id',
+  'protocol', 'host', 'path', 'port', 'query', 'hash', 'originalRequest', 'status', 'code',
+  'cookie', 'responseTime', 'responseSize', 'language', '_postman_previewlanguage',
+  'listen', 'script', 'exec', 'packages', 'prerequest', 'test', 'saveOptions',
+  'bearer', 'basic', 'apikey', 'oauth2', 'noauth', 'token', 'username', 'password', 'in',
+  'content', 'contentType', 'major', 'minor', 'patch', 'identifier', 'meta', 'variables',
+]);
+
+/**
+ * A property key in a rendered path. Known schema keys stay literal so ordinary paths read
+ * well; anything else is fingerprinted, because an extension field's KEY can itself be
+ * sensitive and the renderer must not decide that by looking at it.
+ */
+export function safeKey(key) {
+  const raw = String(key ?? '');
+  if (KNOWN_KEYS.has(raw)) return raw;
+  return `<key sha256:${fp(raw)}>`;
+}
+
+/**
+ * The normalized URL path, sanitised segment by segment so `POST /api/v1/check` stays readable
+ * while a secret-shaped segment is redacted on its own rather than destroying the whole path.
+ */
+export function safePath(url) {
+  const normalized = normalizePath(url);
+  if (!normalized) return '';
+  return normalized
+    .split('/')
+    .map((seg) => (seg === '' ? '' : safeComponent(seg, { kind: 'path segment' })))
+    .join('/');
+}
+
+/** An HTTP method is not assumed trustworthy either. */
+export function safeMethod(method) {
+  const raw = String(method ?? '').toUpperCase();
+  if (!raw) return '';
+  return /^[A-Z]{3,10}$/.test(raw) ? raw : safeComponent(raw, { kind: 'method' });
 }
 
 /** A folder is identified by name; a request by method plus normalized path. */
 function itemLabel(node) {
   if (!isObj(node)) return null;
-  if (Array.isArray(node.item)) return safeLabel(node.name, { kind: 'folder name' });
-  const method = String(node.request?.method ?? '').toUpperCase();
-  const path = normalizePath(node.request?.url);
-  if (!method && !path) return safeLabel(node.name, { kind: 'request name' });
+  if (Array.isArray(node.item)) return safeComponent(node.name, { kind: 'folder name' });
+  const method = safeMethod(node.request?.method);
+  const path = safePath(node.request?.url);
+  if (!method && !path) return safeComponent(node.name, { kind: 'request name' });
   return `${method} ${path}`.trim();
 }
 
 /** Arrays that have a stable semantic identity, and how to derive it. */
 const ARRAY_KEYERS = {
   item: itemLabel,
-  response: (x) => safeLabel(x?.name, { kind: 'example name' }),
-  event: (x) => safeLabel(x?.listen, { kind: 'listen' }),
-  header: (x) => safeLabel(x?.key, { kind: 'header name' }),
-  headers: (x) => safeLabel(x?.key, { kind: 'header name' }),
-  variable: (x) => safeLabel(x?.key, { kind: 'variable name' }),
-  query: (x) => safeLabel(x?.key, { kind: 'query name' }),
+  response: (x) => safeComponent(x?.name, { kind: 'example name' }),
+  event: (x) => safeComponent(x?.listen, { kind: 'listen' }),
+  header: (x) => safeComponent(x?.key, { kind: 'header name' }),
+  headers: (x) => safeComponent(x?.key, { kind: 'header name' }),
+  variable: (x) => safeComponent(x?.key, { kind: 'variable name' }),
+  query: (x) => safeComponent(x?.key, { kind: 'query name' }),
 };
 
 /** Can this array be keyed semantically — every element yielding a distinct, non-empty key? */
@@ -579,7 +635,7 @@ export function safeDiff(local, remote) {
   const removed = [];
   const changed = [];
 
-  const walk = (a, b, path) => {
+  const walk = (a, b, path, fieldOf = '') => {
     const aMissing = a === undefined;
     const bMissing = b === undefined;
     if (aMissing && bMissing) return;
@@ -593,7 +649,10 @@ export function safeDiff(local, remote) {
 
     if (aObj && bObj) {
       for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-        walk(a[k], b[k], path ? `${path}.${k}` : k);
+        // R1: the key is externally derived too — an extension field's name can itself be
+        // sensitive, so it goes through the same policy as every other component.
+        const rendered = safeKey(k);
+        walk(a[k], b[k], path ? `${path}.${rendered}` : rendered, k);
       }
       return;
     }
@@ -604,13 +663,15 @@ export function safeDiff(local, remote) {
         if (JSON.stringify(a) !== JSON.stringify(b)) changed.push(path);
         return;
       }
-      const field = path.split('.').pop().replace(/\[.*$/, '');
+      // `fieldOf` is tracked separately from the rendered path: the keyer lookup needs the raw
+      // schema key, which a rendered path may have fingerprinted.
+      const field = fieldOf;
       // both sides must be keyable, or neither is keyed
       const semantic = keyable(a, field) && keyable(b, field);
       const ai = new Map(indexArray(a, field, semantic));
       const bi = new Map(indexArray(b, field, semantic));
       for (const key of new Set([...ai.keys(), ...bi.keys()])) {
-        walk(ai.get(key), bi.get(key), `${path}${key}`);
+        walk(ai.get(key), bi.get(key), `${path}${key}`, fieldOf);
       }
       return;
     }
@@ -632,7 +693,11 @@ export function formatSafeDiff(diff, { max = 40, log = console.log } = {}) {
   log(`    changed : ${diff.changed.length}`);
   for (const [label, paths] of [['added', diff.added], ['removed', diff.removed], ['changed', diff.changed]]) {
     if (!paths.length) continue;
-    log(`\n    ${label} paths:`);
+    // A blank line is emitted as its own call, never embedded: every line this function hands to
+    // the logger must be exactly one line, so "no control character in any emitted line" is a
+    // property the caller can rely on.
+    log('');
+    log(`    ${label} paths:`);
     for (const p of paths.slice(0, max)) log(`      ${p}`);
     if (paths.length > max) log(`      …and ${paths.length - max} more`);
   }
