@@ -355,21 +355,34 @@ describe('SAFE_DIFF_DOES_NOT_CHANGE_HASH', () => {
   /**
    * REVIEWED CANONICAL HASHES — fail-closed detection of an UNREVIEWED collection change.
    *
-   * Both values moved because the published API surface changed: the paid collection went from 46
-   * to 45 requests and the sandbox collection from 21 to 44, so every request item the comparator
-   * hashes moved with them. That is an INTENTIONAL artifact change, mirrored from the serving
-   * repository, and these hashes were re-derived from the committed collections rather than copied
-   * out of a CI failure log — the independent derivation is recorded in the repair PR.
+   * Both values moved once because the published API surface changed: the paid collection went
+   * from 46 to 45 requests and the sandbox collection from 21 to 44, so every request item the
+   * comparator hashes moved with them. The paid value then moved a SECOND time, for a different
+   * reason: `Labels > POST /api/labels — create` carried its id-capture script at
+   * `item.request.event`, and a Postman collection ITEM owns its `event` array. A request-nested
+   * event is not echoed back by the API, so the publisher's post-write GET could never hash-match
+   * and the paid publish failed closed AFTER its PUT — leaving the remote half-written and the
+   * sandbox collection unpublished. Relocating the event to item level is what this value reflects;
+   * the script body is unchanged.
    *
-   * The earlier paid value (9ccc9a57…) belonged to the 46-request generation, and the earlier
-   * sandbox value (b1a89ffc…) to the 21-request one. Neither is reachable from the current files.
+   * Every one of these was re-derived from the committed collections rather than copied out of a
+   * CI failure log — the independent derivation is recorded in the PR.
+   *
+   * Superseded paid values: 9ccc9a57… (46-request generation) and b5d54c4f… (45 requests, event
+   * still nested under `request`). Superseded sandbox value: b1a89ffc… (21 requests). None is
+   * reachable from the current files.
+   *
+   * The event PLACEMENT itself is enforced upstream, in the serving repository's
+   * `validate-public-contract` gate, which is where it belongs: the fix was applied downstream
+   * here once before and a later byte-exact sync overwrote it, because the source of truth had no
+   * opinion on placement. These hashes are the downstream witness, not the enforcement.
    *
    * These must stay HAND-REVIEWED. There is deliberately no updater that accepts whatever hash
    * appears: the whole point is that a collection change nobody looked at fails here.
    */
   test('both real collections hash to their reviewed canonical values', () => {
     const expected = {
-      'paid-collection.json': 'b5d54c4ff488bb60ae135563a3b609f90cc98463706b4af2c20905729ef3f283',
+      'paid-collection.json': 'b7dde0fef3ae6de2ca060001ead1492576a03e537ba9ae4ffdd1a3246449bbfc',
       'onchainrisk_sandbox_api_collection.json': '379e07985aa0e91a2fe9af30d31d63c20e64e3deae252d1564634896a870d303',
     };
     for (const [file, hash] of Object.entries(expected)) {
