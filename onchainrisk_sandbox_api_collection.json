@@ -22,6 +22,35 @@
       "value": "0xa39b189482f984388a34460636fea9eb181ad1a6",
       "type": "string",
       "description": "Light demo address — runs fast. Swap to your own for real integration testing."
+    },
+    {
+      "key": "sample_block",
+      "value": "19500000",
+      "type": "string"
+    },
+    {
+      "key": "sample_investigation_id",
+      "value": "REPLACE_AFTER_INVESTIGATE",
+      "type": "string",
+      "description": "Auto-populated from GET /api/investigations (first item). Or run POST /api/investigate first."
+    },
+    {
+      "key": "sample_report_id",
+      "value": "REPLACE_AFTER_FIRST_CHECK",
+      "type": "string",
+      "description": "Auto-populated when you run POST /api/v1/check (sync path) or POST /api/v1/multichain/analyze (async). Source: response.data.reportId."
+    },
+    {
+      "key": "sample_token_address",
+      "value": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "type": "string",
+      "description": "USDC on Ethereum — safe honeypot/security test subject."
+    },
+    {
+      "key": "sample_watchlist_id",
+      "value": "REPLACE_AFTER_WATCHLIST_ADD",
+      "type": "string",
+      "description": "Auto-populated when you run POST /api/watchlist. Source: response.data.id."
     }
   ],
   "item": [
@@ -41,7 +70,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\"\n}"
+          "raw": "{\n  \"address\": \"{{fixture_address}}\",\n  \"network\": \"{{fixture_network}}\"\n}\n"
         },
         "url": {
           "raw": "{{base_url}}/api/v1/check",
@@ -54,7 +83,7 @@
             "check"
           ]
         },
-        "description": "Sandbox risk analysis for one address. The response carries a `_sandbox` block and gates the paid-only sections (`crossChain`, `tokenFlow`, `clusters`) to null. Validation failures return 422 with `error.code = VALIDATION_ERROR` — the stored examples below show each granular `details.errorCode`."
+        "description": "Two documented fixture inputs change only the EXECUTION, never the contract:\n\n  - {{fixture_address}} -> synchronous 200 (check-eth-735-v1)\n  - {{fixture_async_success_address}} -> 202 async lifecycle reaching complete (check-eth-735-async-success-v1)\n  - {{fixture_async_failed_address}} -> 202 async lifecycle reaching failed (check-eth-735-async-failed-v1)\n\nEvery other address runs real bounded analysis and returns 200. There is NO request flag.\n\nOn a 202 the test script captures `reportId` into a collection variable, so requests 4 and 5\nare runnable immediately afterwards. Ownership is the OWNING ACCOUNT: any sandbox key on the\nsame account may poll and retrieve that reportId — the literal key here is a convenience,\nnot a requirement."
       },
       "event": [
         {
@@ -62,43 +91,64 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('200 sync or 202 async', () => pm.expect([200, 202]).to.include(pm.response.code));",
               "const d = pm.response.json().data;",
-              "pm.test('_sandbox block present', () => pm.expect(d._sandbox).to.be.an('object'));",
-              "pm.test('_sandbox.profile = sandbox', () => pm.expect(d._sandbox.profile).to.equal('sandbox'));",
-              "pm.test('_sandbox.reports_saved = false', () => pm.expect(d._sandbox.reports_saved).to.equal(false));",
-              "pm.test('gated: crossChain is null', () => pm.expect(d.crossChain).to.equal(null));",
-              "pm.test('gated: tokenFlow is null', () => pm.expect(d.tokenFlow).to.equal(null));",
-              "pm.test('gated: clusters is null', () => pm.expect(d.clusters).to.equal(null));",
-              "pm.test('gated: topCounterparties is []', () => pm.expect(d.topCounterparties).to.eql([]));",
-              "pm.test('no reportId (sandbox does not persist)', () => pm.expect(d).to.not.have.property('reportId'));",
-              "pm.test('no analysisMode (omitted by policy)', () => pm.expect(d).to.not.have.property('analysisMode'));"
-            ]
-          }
-        },
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "// Stable validation envelope: validation errors always 422 with",
-              "// success:false + error.code=VALIDATION_ERROR + details.errorCode.",
-              "// Added 2026-04-24 after the Tron/network mismatch incident.",
-              "// (Ref: docs/testing/fixtures/validation/*.json — same shape.)",
-              "pm.test('validation envelope is stable (422)', function () {",
-              "    if (pm.response.code !== 422) return;",
-              "    const body = pm.response.json();",
-              "    pm.expect(body).to.have.property('success', false);",
-              "    pm.expect(body.error).to.have.property('code', 'VALIDATION_ERROR');",
-              "    pm.expect(body.error).to.have.property('message');",
-              "    pm.expect(body.error).to.have.property('details');",
-              "    pm.expect(body.error.details).to.have.property('errorCode');",
-              "});"
+              "if (pm.response.code === 202) {",
+              "  pm.test('reportId is a UUID', () => pm.expect(d.reportId).to.match(",
+              "    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/));",
+              "  pm.test('status is queued or analyzing', () => pm.expect(['queued','analyzing']).to.include(d.status));",
+              "  pm.collectionVariables.set('report_id', d.reportId);",
+              "} else {",
+              "  pm.test('sandbox marker present', () => pm.expect(d._sandbox.execution_mode).to.be.oneOf(['bounded','fixture']));",
+              "}"
             ]
           }
         }
       ],
       "response": [
+        {
+          "name": "200 documented fixture (check-eth-735-v1)",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sandbox_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"{{fixture_address}}\",\n  \"network\": \"{{fixture_network}}\"\n}\n"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "description": "Two documented fixture inputs change only the EXECUTION, never the contract:\n\n  - {{fixture_address}} -> synchronous 200 (check-eth-735-v1)\n  - {{fixture_async_success_address}} -> 202 async lifecycle reaching complete (check-eth-735-async-success-v1)\n  - {{fixture_async_failed_address}} -> 202 async lifecycle reaching failed (check-eth-735-async-failed-v1)\n\nEvery other address runs real bounded analysis and returns 200. There is NO request flag.\n\nOn a 202 the test script captures `reportId` into a collection variable, so requests 4 and 5\nare runnable immediately afterwards. Ownership is the OWNING ACCOUNT: any sandbox key on the\nsame account may poll and retrieve that reportId — the literal key here is a convenience,\nnot a requirement."
+          },
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"success\": true,\n  \"data\": {\n    \"address\": \"0x0000000000000000000000000000000000735735\",\n    \"network\": \"eth\",\n    \"riskScore\": 12,\n    \"riskLevel\": \"low\",\n    \"riskConfidence\": \"high\",\n    \"dataQuality\": \"full\",\n    \"riskNote\": \"No sanctioned, mixer or exploit interaction detected in the analysed window.\",\n    \"addressInfo\": {\n      \"type\": \"eoa\",\n      \"balance\": \"1.5 ETH\",\n      \"balanceUsd\": 3045.5,\n      \"nativePriceUsd\": 2030.33,\n      \"txCount\": 4,\n      \"firstSeen\": \"2026-01-01T00:00:00Z\",\n      \"lastSeen\": \"2026-01-03T00:00:00Z\"\n    },\n    \"labels\": [\n      \"exchange\"\n    ],\n    \"usdPrices\": {\n      \"eth\": 2030.33\n    },\n    \"analysisTime\": 0,\n    \"timestamp\": \"2026-01-03T00:00:00.000Z\",\n    \"patternFlags\": [\n      \"BULK COLLECTION pattern: 24 inbound TXs in 600s\"\n    ],\n    \"transactionHistory\": [\n      {\n        \"hash\": \"0x1111111111111111111111111111111111111111111111111111111111111111\",\n        \"timestamp\": 1767225600,\n        \"direction\": \"in\",\n        \"counterparty\": \"0x0000000000000000000000000000000000c0ffee\",\n        \"counterpartyLabel\": {\n          \"address\": \"0x0000000000000000000000000000000000c0ffee\",\n          \"label\": \"Exchange Hot Wallet\",\n          \"category\": \"exchange\",\n          \"source\": \"manual\",\n          \"custom_label\": null\n        },\n        \"value\": \"1.000000000000000000\",\n        \"valueWei\": \"1000000000000000000\",\n        \"isError\": false,\n        \"methodId\": \"\",\n        \"functionName\": \"\"\n      },\n      {\n        \"hash\": \"0x2222222222222222222222222222222222222222222222222222222222222222\",\n        \"timestamp\": 1767312000,\n        \"direction\": \"out\",\n        \"counterparty\": \"0x0000000000000000000000000000000000beef00\",\n        \"counterpartyLabel\": null,\n        \"value\": \"0.250000000000000000\",\n        \"valueWei\": \"250000000000000000\",\n        \"isError\": false,\n        \"methodId\": \"0xa9059cbb\",\n        \"functionName\": \"transfer(address,uint256)\"\n      },\n      {\n        \"hash\": \"0x3333333333333333333333333333333333333333333333333333333333333333\",\n        \"timestamp\": 1767398400,\n        \"direction\": \"self\",\n        \"counterparty\": \"0x0000000000000000000000000000000000735735\",\n        \"counterpartyLabel\": null,\n        \"value\": \"0.000000000000000000\",\n        \"valueWei\": \"0\",\n        \"isError\": true,\n        \"methodId\": \"\",\n        \"functionName\": \"\"\n      },\n      {\n        \"hash\": \"0x8888888888888888888888888888888888888888888888888888888888888888\",\n        \"timestamp\": 1767484800,\n        \"direction\": \"mixed\",\n        \"counterparty\": \"\",\n        \"counterpartyLabel\": null,\n        \"value\": null,\n        \"valueWei\": null,\n        \"isError\": false,\n        \"methodId\": \"\",\n        \"functionName\": \"\"\n      }\n    ],\n    \"tokenTransferHistory\": [\n      {\n        \"hash\": \"0x4444444444444444444444444444444444444444444444444444444444444444\",\n        \"timestamp\": 1767312000,\n        \"direction\": \"out\",\n        \"counterparty\": \"0x0000000000000000000000000000000000c0ffee\",\n        \"counterpartyLabel\": {\n          \"address\": \"0x0000000000000000000000000000000000c0ffee\",\n          \"label\": \"Exchange Hot Wallet\",\n          \"category\": \"exchange\",\n          \"source\": \"manual\",\n          \"custom_label\": null\n        },\n        \"tokenSymbol\": \"USDC\",\n        \"tokenName\": \"USD Coin\",\n        \"value\": \"100.5\"\n      },\n      {\n        \"hash\": \"0x5555555555555555555555555555555555555555555555555555555555555555\",\n        \"timestamp\": 1767398400,\n        \"direction\": \"in\",\n        \"counterparty\": \"0x0000000000000000000000000000000000beef00\",\n        \"counterpartyLabel\": null,\n        \"tokenSymbol\": \"DAI\",\n        \"tokenName\": \"Dai Stablecoin\",\n        \"value\": \"0.000001\"\n      }\n    ],\n    \"contractDeployments\": [\n      {\n        \"txHash\": \"0x6666666666666666666666666666666666666666666666666666666666666666\",\n        \"timestamp\": \"2026-01-02T00:00:00+00:00\",\n        \"contractAddress\": \"0x00000000000000000000000000000000000dec0d\",\n        \"contractName\": \"ERC20Token\",\n        \"isVerified\": true,\n        \"gasUsed\": 1234567,\n        \"gasCost\": \"0.0012 ETH\",\n        \"gasCostWei\": 1234567890123456\n      },\n      {\n        \"txHash\": \"0x7777777777777777777777777777777777777777777777777777777777777777\",\n        \"timestamp\": \"2026-01-03T00:00:00+00:00\",\n        \"contractAddress\": \"0x00000000000000000000000000000000000dec0e\",\n        \"contractName\": null,\n        \"isVerified\": false,\n        \"gasUsed\": 98765,\n        \"gasCost\": \"0.0001 ETH\",\n        \"gasCostWei\": 98765432109876\n      }\n    ],\n    \"addressConnections\": [\n      {\n        \"category\": \"exchange\",\n        \"percentage\": 64,\n        \"valueFormatted\": \"1.25 ETH\",\n        \"valueRaw\": \"1250000000000000000\",\n        \"unit\": \"wei\"\n      },\n      {\n        \"category\": \"unknown\",\n        \"percentage\": 36,\n        \"valueFormatted\": \"0.70 ETH\",\n        \"valueRaw\": \"700000000000000000\",\n        \"unit\": \"wei\"\n      }\n    ],\n    \"dataCompleteness\": {\n      \"reportedTxCount\": 4,\n      \"fetchedTxCount\": 4,\n      \"completenessPct\": 100,\n      \"partialReason\": null\n    },\n    \"topCounterparties\": [],\n    \"destinationEntities\": [],\n    \"crossChain\": null,\n    \"tokenFlow\": null,\n    \"clusters\": null,\n    \"temporalClusters\": null,\n    \"nftWashTrading\": null,\n    \"exchangeDeposits\": null,\n    \"destinationEntitySummary\": null,\n    \"osintIntelligence\": null,\n    \"railgun\": null,\n    \"defiSwaps\": null,\n    \"contractAnalysis\": null,\n    \"honeypot\": null,\n    \"tokenScore\": null,\n    \"timing\": null,\n    \"fundedBy\": null,\n    \"contractInfo\": null,\n    \"_sandbox\": {\n      \"profile\": \"sandbox\",\n      \"coverage_days\": 7,\n      \"reports_saved\": false,\n      \"gated_fields\": [\n        \"crossChain\",\n        \"tokenFlow\",\n        \"clusters\",\n        \"temporalClusters\",\n        \"nftWashTrading\",\n        \"exchangeDeposits\",\n        \"destinationEntitySummary\",\n        \"osintIntelligence\",\n        \"railgun\",\n        \"defiSwaps\",\n        \"contractAnalysis\",\n        \"honeypot\",\n        \"tokenScore\",\n        \"timing\",\n        \"fundedBy\",\n        \"contractInfo\",\n        \"topCounterparties\",\n        \"destinationEntities\"\n      ],\n      \"truncated_fields\": {\n        \"patternFlags\": \"top_5_only\"\n      },\n      \"upgrade_url\": \"https://onchainrisk.io/pricing\",\n      \"docs_url\": \"https://onchainrisk.io/docs/sandbox\",\n      \"execution_mode\": \"fixture\",\n      \"fixture_fields\": [\n        \"addressConnections\",\n        \"contractDeployments\",\n        \"dataCompleteness\",\n        \"tokenTransferHistory\",\n        \"transactionHistory\"\n      ]\n    },\n    \"patternFlagDetails\": [\n      {\n        \"code\": \"bulk_collection\",\n        \"templateKey\": \"pattern.bulk_collection\",\n        \"defaultEn\": \"BULK COLLECTION pattern: 24 inbound TXs in 600s\",\n        \"severity\": \"medium\",\n        \"description\": \"Many sources sent funds within a short window (bulk collection).\"\n      }\n    ]\n  }\n}\n"
+        },
         {
           "name": "422 ADDRESS_NETWORK_MISMATCH (Tron + network=eth)",
           "originalRequest": {
@@ -435,6 +485,1579 @@
           }
         }
       ]
+    },
+    {
+      "name": "4. Poll status — GET /api/v1/check/status/{reportId}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/check/status/{{report_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "check",
+            "status",
+            "{{report_id}}"
+          ]
+        },
+        "description": "Re-send to watch the lifecycle advance: queued, then analyzing after 2s, then a terminal status after 6s. 404 after 3600s, and for any id the calling account does not own."
+      },
+      "response": []
+    },
+    {
+      "name": "5. Retrieve report — GET /api/reports/{id}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/reports/{{report_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "reports",
+            "{{report_id}}"
+          ]
+        },
+        "description": "Before completion this returns a LIGHTWEIGHT 200 body — including `failed`, which is HTTP 200 with `status: failed` and `errorMessage` populated, not a 4xx. Once `status` is `complete` it returns the full AnalysisResult."
+      },
+      "response": []
+    },
+    {
+      "name": "6. GET /api/v1/check/{address}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/check/{{sample_address}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "check",
+            "{{sample_address}}"
+          ]
+        },
+        "description": "Bounded sandbox analysis of the address in the path. Real narrowed analysis, no billing."
+      },
+      "response": []
+    },
+    {
+      "name": "7. POST /api/v1/check/deep",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/check/deep",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "check",
+            "deep"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{fixture_address}}\",\n  \"network\": \"{{fixture_network}}\"\n}\n"
+        },
+        "description": "Deterministic fixture peel chain. Post 0x0000000000000000000000000000000000735d00 to get the null (no-chain) state."
+      },
+      "response": []
+    },
+    {
+      "name": "8. POST /api/v1/token/check",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/token/check",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "token",
+            "check"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{fixture_address}}\",\n  \"network\": \"{{fixture_network}}\"\n}\n"
+        },
+        "description": "Deterministic fixture sections. Post 0x0000000000000000000000000000000000735710 for a non-ok honeypot status, where isHoneypot is null."
+      },
+      "response": []
+    },
+    {
+      "name": "9. POST /api/v1/token/check/stream",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/token/check/stream",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "token",
+            "check",
+            "stream"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{fixture_address}}\",\n  \"network\": \"{{fixture_network}}\"\n}\n"
+        },
+        "description": "Simulated SSE. Unnamed data: frames for tokenMeta, honeypot, topHolders, tokenScore, then {\"type\":\"done\"}, then close."
+      },
+      "response": []
+    },
+    {
+      "name": "10. POST /api/v1/block/analyze",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/block/analyze",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "block",
+            "analyze"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"blockNumber\": 21000123,\n  \"network\": \"{{fixture_network}}\"\n}\n"
+        },
+        "description": "Deterministic fixture MEV result. Post blockNumber 735735 for the empty-block state."
+      },
+      "response": []
+    },
+    {
+      "name": "11. POST /api/v1/multichain/scan",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/multichain/scan",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "multichain",
+            "scan"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{fixture_address}}\"\n}\n"
+        },
+        "description": "Deterministic fixture multi-chain summary."
+      },
+      "response": []
+    },
+    {
+      "name": "12. POST /api/v1/multichain/analyze",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/multichain/analyze",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "multichain",
+            "analyze"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{fixture_address}}\",\n  \"networks\": [\n    \"eth\",\n    \"bsc\"\n  ]\n}\n"
+        },
+        "description": "Accepts a simulated lifecycle: 202 with an INTEGER reportId. Each call starts a new one — no dedupe. Post 0x0000000000000000000000000000000000735f02 for the failing lifecycle."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b = pm.response.json();",
+              "if (b && b.data && b.data.reportId) {",
+              "  pm.collectionVariables.set('multichain_report_id', String(b.data.reportId));",
+              "}"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "13. GET /api/v1/multichain/analyze/{reportId}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/multichain/analyze/{{multichain_report_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "multichain",
+            "analyze",
+            "{{multichain_report_id}}"
+          ]
+        },
+        "description": "Polls the lifecycle accepted above: analyzing, then complete (or failed). The terminal analytical values are SYNTHETIC. Unknown, unowned and expired ids are indistinguishable 404s."
+      },
+      "response": []
+    },
+    {
+      "name": "14. POST /api/graph/expand",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/graph/expand",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "graph",
+            "expand"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{fixture_address}}\",\n  \"network\": \"{{fixture_network}}\"\n}\n"
+        },
+        "description": "Bounded sandbox graph, served by the same primitive as /api/v1/sandbox/graph/expand."
+      },
+      "response": []
+    },
+    {
+      "name": "15. POST /api/notifications/test",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/notifications/test",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "notifications",
+            "test"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"channel\": \"telegram\"\n}\n"
+        },
+        "description": "Simulated: validates the channel exactly as paid does, then sends nothing."
+      },
+      "response": []
+    },
+    {
+      "name": "16. POST /api/labels",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/labels",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "labels"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"{{fixture_network}}\",\n  \"label\": \"Sandbox exchange wallet\",\n  \"category\": \"exchange\",\n  \"notes\": \"created from the sandbox collection\"\n}\n"
+        },
+        "description": "Creates (or upserts) an ephemeral sandbox label and captures its id. Up to 100 live labels; each write resets a 24h expiry."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b = pm.response.json();",
+              "if (b && b.data && b.data.item && b.data.item.id) {",
+              "  pm.collectionVariables.set('sandbox_label_id', String(b.data.item.id));",
+              "}"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "17. GET /api/labels",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/labels",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "labels"
+          ]
+        },
+        "description": "Lists only your own sandbox labels. Add ?search= to filter on address or label, exactly as on paid."
+      },
+      "response": []
+    },
+    {
+      "name": "18. PATCH /api/labels/{id}",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/labels/{{sandbox_label_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "labels",
+            "{{sandbox_label_id}}"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"label\": \"Renamed in sandbox\"\n}\n"
+        },
+        "description": "Partial update of the label created above; omitted fields keep their values. Resets the 24h expiry."
+      },
+      "response": []
+    },
+    {
+      "name": "19. POST /api/labels/import",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/labels/import",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "labels",
+            "import"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"labels\": [\n    {\n      \"address\": \"{{sample_address}}\",\n      \"network\": \"{{fixture_network}}\",\n      \"label\": \"Imported A\"\n    }\n  ]\n}\n"
+        },
+        "description": "Row-independent import with per-row errors, as paid. A row past the 100-label cap is reported as a row error."
+      },
+      "response": []
+    },
+    {
+      "name": "20. GET /api/labels/export",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/labels/export",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "labels",
+            "export"
+          ]
+        },
+        "description": "CSV export of your live sandbox labels, in the paid format. Expired labels are omitted."
+      },
+      "response": []
+    },
+    {
+      "name": "21. DELETE /api/labels/{id}",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/labels/{{sandbox_label_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "labels",
+            "{{sandbox_label_id}}"
+          ]
+        },
+        "description": "Deletes the label created above and frees one of your 100 slots. Unknown/expired/other-account ids all 404."
+      },
+      "response": []
+    },
+    {
+      "name": "22. GET /api/v1/webhook/deliveries — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/webhook/deliveries",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "webhook",
+            "deliveries"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Webhook delivery history is an audit trail of real outbound deliveries. A sandbox key configures no webhook and the sandbox sends none, so there is no history to serve and an empty page would misrepresent a working integration."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
+              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "23. POST /api/v1/token/reports — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{sample_token_address}}\",\n  \"network\": \"eth\",\n  \"reportData\": {}\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/token/reports",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "token",
+            "reports"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Saving a token report writes a durable paid artifact and a credit transaction."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
+              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "24. GET /api/v1/token/reports — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/token/reports",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "token",
+            "reports"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Lists durable paid artifacts; a sandbox compute call persists nothing."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
+              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "25. POST /api/v1/block/reports — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"blockNumber\": {{sample_block}},\n  \"network\": \"eth\",\n  \"reportData\": {}\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/block/reports",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "block",
+            "reports"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Saving a block report writes a durable paid artifact."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
+              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "26. GET /api/v1/block/reports — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/block/reports",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "block",
+            "reports"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Lists durable paid artifacts; a sandbox compute call persists nothing."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
+              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "27. GET /api/v1/block/reports/{id} — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/block/reports/{{sample_report_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "block",
+            "reports",
+            "{{sample_report_id}}"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Retrieves a durable paid artifact by id."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
+              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "28. POST /api/v1/multichain/reports — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"reportData\": {}\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/multichain/reports",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "multichain",
+            "reports"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Saving a multichain report writes a durable paid artifact."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
+              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "29. GET /api/v1/multichain/reports — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/multichain/reports",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "multichain",
+            "reports"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Lists durable paid artifacts; a sandbox compute call persists nothing."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
+              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "30. GET /api/v1/multichain/reports/{id} — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/multichain/reports/{{sample_report_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "multichain",
+            "reports",
+            "{{sample_report_id}}"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Retrieves a durable paid artifact by id."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
+              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "31. POST /api/investigate — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "text/event-stream"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"message\": \"Summarize suspicious activity patterns for {{sample_address}}.\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/investigate",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "investigate"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. An investigation streams from a real LLM call, consumes AI credits and persists an investigation row. None of that is simulated for sandbox keys."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
+              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "32. GET /api/investigations — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/investigations",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "investigations"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Lists persisted investigations."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
+              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "33. GET /api/investigations/{id} — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/investigations/{{sample_investigation_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "investigations",
+            "{{sample_investigation_id}}"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Retrieves one persisted investigation."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
+              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "34. DELETE /api/investigations/{id} — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/investigations/{{sample_investigation_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "investigations",
+            "{{sample_investigation_id}}"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Deletes one persisted investigation."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
+              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "35. GET /api/watchlist — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/watchlist",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "watchlist"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Watchlist entries are monitored by a real scheduled job that can raise alerts and send notifications, so nothing a sandbox key creates may enter it."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
+              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "36. POST /api/watchlist — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\",\n  \"label\": \"Watched via Postman\",\n  \"notify_email\": 1\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/watchlist",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "watchlist"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Adding an entry enlists an address with a real scheduled monitor. Paid also answers 403 here when the plan has no watchlist allowance — that is a PLAN limit and is a different thing from the sandbox refusal, which applies to every sandbox key."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
+              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "37. PATCH /api/watchlist/{id} — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"label\": \"Updated label\",\n  \"notify_email\": 0,\n  \"notify_telegram\": 1\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/watchlist/{{sample_watchlist_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "watchlist",
+            "{{sample_watchlist_id}}"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Mutates a monitored entry."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
+              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "38. DELETE /api/watchlist/{id} — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/watchlist/{{sample_watchlist_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "watchlist",
+            "{{sample_watchlist_id}}"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Removes a monitored entry."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
+              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "39. GET /api/watchlist/{id}/alerts — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/watchlist/{{sample_watchlist_id}}/alerts",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "watchlist",
+            "{{sample_watchlist_id}}",
+            "alerts"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Alerts are produced by the real monitor against real on-chain activity."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
+              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "40. GET /api/alerts — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/alerts",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "alerts"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Alerts are produced by the real monitor against real on-chain activity."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
+              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "41. GET /api/notifications/settings — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/notifications/settings",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "notifications",
+            "settings"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Reading notification settings CREATES the settings row when none exists, so even the read is a write to paid state."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
+              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "42. PATCH /api/notifications/settings — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email_enabled\": 1,\n  \"webhook_url\": \"\",\n  \"webhook_enabled\": 0\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/notifications/settings",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "notifications",
+            "settings"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Writes the notification settings a real delivery pipeline reads."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
+              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "43. POST /api/notifications/telegram/connect — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"chatId\": \"your-telegram-chat-id\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/notifications/telegram/connect",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "notifications",
+            "telegram",
+            "connect"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Connecting Telegram is an external side effect against a real chat."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
+              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "44. POST /api/notifications/telegram/disconnect — paid only (403 with a sandbox key)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/notifications/telegram/disconnect",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "notifications",
+            "telegram",
+            "disconnect"
+          ]
+        },
+        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Disconnecting Telegram mutates a real external binding."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
+              "const e = pm.response.json().error;",
+              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
+              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
+              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "response": []
     }
   ]
 }

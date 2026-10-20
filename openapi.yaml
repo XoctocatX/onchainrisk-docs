@@ -171,10 +171,21 @@ paths:
         (`reportId` is the value returned here).
 
         **Idempotent retries (30-min window).** If you POST again for the
-        same `(api-key, address, network)` while a previous scan is still
-        in flight, the API returns the existing in-flight `reportId` with
-        `deduplicated: true`. No new charge, no new queue job. Useful for
-        UI re-clicks and client-side retries.
+        same `(owning account, canonical address, network)` while a previous
+        scan for it is still IN FLIGHT, the API returns that lifecycle's
+        existing `reportId` with `deduplicated: true`. No new charge, no new
+        queue job. Useful for UI re-clicks and client-side retries.
+
+        Three details that are easy to get wrong:
+
+        * Ownership is the **account**, not the API key. A different key
+          belonging to the same account deduplicates against the same
+          lifecycle; rotating or adding a key does NOT create a new one.
+        * The address is compared in its **canonical** form, so two spellings
+          of one EVM address (`0x…AB` and `0x…ab`) are the same subject.
+        * Only an **in-flight** lifecycle deduplicates. A `complete` or
+          `failed` report is never a dedupe candidate, however recent — a
+          repeat POST after one finishes starts a new scan.
       security:
         - apiKeyAuth: []
       requestBody:
@@ -205,13 +216,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AnalysisResult'
+                $ref: '#/components/schemas/AnalysisResponse'
         '202':
           description: |
-            Async path — analysis queued. Poll the report endpoint for completion.
-            Two variants:
-              * **queued** — first time this address was submitted in the last 30 minutes.
-              * **deduplicated** — the same (key, address, network) is already in flight; the existing reportId is returned.
+            Async path — analysis accepted. Poll
+            `GET /api/v1/check/status/{reportId}` until it reports a terminal
+            status. Two variants:
+              * **fresh acceptance** — `status: queued`, and no `deduplicated`
+                key at all.
+              * **deduplicated retry** — an in-flight lifecycle already exists
+                for this (owning account, canonical address, network), so its
+                `reportId` is returned with `deduplicated: true` and `status`
+                is that lifecycle's CURRENT status: `queued` if the consumer
+                has not picked it up yet, or `analyzing` if it has.
           content:
             application/json:
               schema:
@@ -226,7 +243,7 @@ paths:
                       status: queued
                       async: true
                 deduplicated:
-                  summary: Idempotent retry within 30 minutes
+                  summary: Idempotent retry, lifecycle still queued
                   value:
                     success: true
                     data:
@@ -234,22 +251,40 @@ paths:
                       status: queued
                       async: true
                       deduplicated: true
+                deduplicatedAnalyzing:
+                  summary: Idempotent retry, lifecycle already analyzing
+                  value:
+                    success: true
+                    data:
+                      reportId: "98958045-d736-4bc4-90ed-a717a9258738"
+                      status: analyzing
+                      async: true
+                      deduplicated: true
         '422':
           $ref: '#/components/responses/ValidationFailed'
         '429':
-          description: Rate limit exceeded
+          $ref: '#/components/responses/RateLimited'
         '503':
           description: Analysis temporarily unavailable
 
   /api/v1/check/{address}:
     get:
       tags: [Analysis]
-      summary: Fetch cached analysis (GET)
+      summary: Analyze address risk (GET)
       description: |
-        Returns a cached report for the address if one exists. Does not consume your quota.
-        Add `?network=eth` to select the network; omit it and the address family is
-        auto-detected. This endpoint is cache-only and never triggers a fresh analysis —
-        to analyse an address now, call `POST /api/v1/check`.
+        Runs a FRESH analysis of the address and returns the result. There is no response
+        cache on this route: every call runs the full fetch pipeline, exactly like
+        `POST /api/v1/check`. Add `?network=eth` to select the network; omit it and the
+        address family is auto-detected.
+
+        **This call consumes quota.** It goes through the same usage path as
+        `POST /api/v1/check` — plan checks first, then purchased credits — so it can answer
+        `429` when your plan allowance and credits are both exhausted, and it records a
+        `check` against your usage on a successful analysis. An interrupted or empty
+        analysis is not charged (`creditNote` says so in the response).
+
+        To read a report you already have, use `GET /api/reports/{id}` — that is the
+        persisted-report surface and it does not re-analyse or charge.
 
         **Smart contracts:** when the address is a deployed contract, the response includes
         `contractAnalysis` (bytecode metadata) and may include `contractInfo` (proxy/deployment
@@ -268,11 +303,11 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Analysis result
+          description: Analysis result (fresh analysis; charged)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AnalysisResult'
+                $ref: '#/components/schemas/AnalysisResponse'
               examples:
                 verifiedContract:
                   summary: Normal verified smart contract
@@ -281,42 +316,44 @@ paths:
                     `contractAnalysis` carries full bytecode metadata; `dataCompleteness` is
                     not partial.
                   value:
-                    address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-                    network: eth
-                    riskScore: 5
-                    riskLevel: low
-                    addressInfo:
-                      type: smart_contract
-                      balance: "0 ETH"
-                      txCount: 412
-                      firstSeen: "2020-06-09T18:43:35Z"
-                      lastSeen: "2026-04-25T10:11:02Z"
-                    patternFlags: []
-                    contractAnalysis:
-                      contractName: "FiatTokenV2_2"
-                      bytecodeSize: 24576
-                      compilerVersion: "v0.6.12+commit.27d51765"
-                      deployer: "0x95Ba4cF87D6723ad9C0Db21737D862bE80e93911"
-                      isVerified: true
-                      hasSelfdestruct: false
-                      hasDelegatecall: true
-                      hasCreate2: false
-                      similarityFlags: ["ERC20", "Upgradeable"]
-                      knownSignatures: ["transfer(address,uint256)", "approve(address,uint256)", "balanceOf(address)"]
-                    contractInfo:
-                      deployer: "0x95Ba4cF87D6723ad9C0Db21737D862bE80e93911"
-                      creationTx: "0xe7e0fe390354509cd08c9a0168536938600ddc552b3f7cb96030ebef62e75895"
-                      creationBlock: 6082465
-                      isProxy: true
-                      implementationAddress: "0xa2327a938Febf5FEC13baCFb16Ae10EcBc4cbDCF"
-                      contractName: "FiatTokenV2_2"
-                    dataCompleteness:
-                      reportedTxCount: 412
-                      fetchedTxCount: 412
-                      completenessPct: 100
-                      partialReason: null
-                    analysisTime: 4321
-                    timestamp: "2026-04-25T10:15:00Z"
+                    success: true
+                    data:
+                      address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+                      network: eth
+                      riskScore: 5
+                      riskLevel: low
+                      addressInfo:
+                        type: smart_contract
+                        balance: "0 ETH"
+                        txCount: 412
+                        firstSeen: "2020-06-09T18:43:35Z"
+                        lastSeen: "2026-04-25T10:11:02Z"
+                      patternFlags: []
+                      contractAnalysis:
+                        contractName: "FiatTokenV2_2"
+                        bytecodeSize: 24576
+                        compilerVersion: "v0.6.12+commit.27d51765"
+                        deployer: "0x95Ba4cF87D6723ad9C0Db21737D862bE80e93911"
+                        isVerified: true
+                        hasSelfdestruct: false
+                        hasDelegatecall: true
+                        hasCreate2: false
+                        similarityFlags: ["ERC20", "Upgradeable"]
+                        knownSignatures: ["transfer(address,uint256)", "approve(address,uint256)", "balanceOf(address)"]
+                      contractInfo:
+                        deployer: "0x95Ba4cF87D6723ad9C0Db21737D862bE80e93911"
+                        creationTx: "0xe7e0fe390354509cd08c9a0168536938600ddc552b3f7cb96030ebef62e75895"
+                        creationBlock: 6082465
+                        isProxy: true
+                        implementationAddress: "0xa2327a938Febf5FEC13baCFb16Ae10EcBc4cbDCF"
+                        contractName: "FiatTokenV2_2"
+                      dataCompleteness:
+                        reportedTxCount: 412
+                        fetchedTxCount: 412
+                        completenessPct: 100
+                        partialReason: null
+                      analysisTime: 4321
+                      timestamp: "2026-04-25T10:15:00Z"
                 heavyContractOverview:
                   summary: Heavy contract — overview only
                   description: |
@@ -326,38 +363,46 @@ paths:
                     still arrays (possibly empty) — the backend normalizes the shape so the
                     consumer never has to runtime-guard.
                   value:
-                    address: "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-                    network: eth
-                    riskScore: null
-                    riskLevel: low
-                    addressInfo:
-                      type: contract
-                      balance: "0 ETH"
-                      txCount: 267575
-                      firstSeen: "2021-05-04T23:10:00Z"
-                      lastSeen: "2026-04-25T09:55:21Z"
-                    patternFlags: []
-                    contractAnalysis:
-                      contractName: null
-                      bytecodeSize: 6177
-                      compilerVersion: "v0.8.16+commit.07a7930e"
-                      deployer: null
-                      isVerified: true
-                      hasSelfdestruct: false
-                      hasDelegatecall: false
-                      hasCreate2: false
-                      similarityFlags: []
-                      knownSignatures: []
-                    dataCompleteness:
-                      reportedTxCount: 267575
-                      fetchedTxCount: 0
-                      completenessPct: 0
+                    success: true
+                    data:
+                      address: "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+                      network: eth
+                      riskScore: null
+                      riskLevel: low
+                      addressInfo:
+                        type: contract
+                        balance: "0 ETH"
+                        txCount: 267575
+                        firstSeen: "2021-05-04T23:10:00Z"
+                        lastSeen: "2026-04-25T09:55:21Z"
+                      patternFlags: []
+                      contractAnalysis:
+                        contractName: null
+                        bytecodeSize: 6177
+                        compilerVersion: "v0.8.16+commit.07a7930e"
+                        deployer: null
+                        isVerified: true
+                        hasSelfdestruct: false
+                        hasDelegatecall: false
+                        hasCreate2: false
+                        similarityFlags: []
+                        knownSignatures: []
+                      dataCompleteness:
+                        reportedTxCount: 267575
+                        fetchedTxCount: 0
+                        completenessPct: 0
+                        partialReason: heavy_contract_overview
                       partialReason: heavy_contract_overview
-                    partialReason: heavy_contract_overview
-                    analysisTime: 1820
-                    timestamp: "2026-04-25T10:00:00Z"
+                      analysisTime: 1820
+                      timestamp: "2026-04-25T10:00:00Z"
         '422':
           $ref: '#/components/responses/ValidationFailed'
+        '429':
+          description: |
+            Rate limit exceeded, or plan allowance and purchased credits are both
+            exhausted (`LIMIT_EXCEEDED` / `DAILY_LIMIT_EXCEEDED`).
+        '503':
+          description: Analysis temporarily unavailable
 
   /api/v1/check/status/{reportId}:
     get:
@@ -367,8 +412,11 @@ paths:
         Poll the status of an async scan that POST `/api/v1/check` returned with
         `async: true`. Lightweight: returns lifecycle status + risk summary
         once complete — **this endpoint never returns the full report body.**
-        Does NOT consume quota. Authenticated with the same API key that
-        initiated the scan.
+        Does NOT consume quota.
+
+        Ownership is the **owning account**, not a particular key: the report
+        may be polled by any authenticated API key belonging to the account
+        that owns it, including one created after the scan was accepted.
 
         When `status` is `complete`, retrieve the full analysis with
         `GET /api/reports/{reportId}`.
@@ -392,7 +440,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ScanStatus'
+                $ref: '#/components/schemas/ScanStatusResponse'
               examples:
                 queued:
                   summary: Just queued
@@ -451,7 +499,10 @@ paths:
                       startedAt: "2026-04-26T22:27:35Z"
                       finishedAt: "2026-04-26T22:32:35Z"
         '404':
-          description: Report not found or not owned by this API key
+          description: |
+            Not found, or not owned by the calling account. The two are
+            deliberately indistinguishable — a report belonging to another
+            account answers exactly as an id that never existed.
         '401':
           description: Unauthorized
 
@@ -466,15 +517,32 @@ paths:
         scan completes: `GET /api/v1/check/status/{reportId}` returns only the
         lifecycle summary, never the report body.
 
-        Accepts the same API key that created the report. Returns 404 if the id
-        does not exist or is not owned by the caller. Does NOT consume quota.
+        Accepts any authenticated API key belonging to the **owning account**,
+        not only the key that created the report. Returns 404 if the id does
+        not exist or is not owned by the calling account — the two are
+        indistinguishable by design. Does NOT consume quota.
 
-        **Response shape:**
-          * complete report → full `AnalysisResult`.
-          * async report still in flight (`queued` / `analyzing`) → a
-            lightweight body carrying `reportId`, `address`, `network`,
-            `status` and `createdAt` (no analysis fields yet — keep polling
-            `GET /api/v1/check/status/{reportId}`).
+        **Response shape** is decided by the PRESENCE of `data.status`, not by its
+        value — branch on presence, never on `data.status === 'complete'`:
+
+          * `data.status` PRESENT and NOT `complete` → HTTP 200 with a lightweight body
+            carrying `reportId`, `address`, `network`, `status`, `errorMessage` and
+            `createdAt`, and no analysis fields.
+          * `data.status` ABSENT → HTTP 200 with the complete report: the normalized
+            `AnalysisResult` plus `reportId`, `address`, `network`, `name`, `createdAt`
+            and the `access` / `export` egress DTOs. **The complete branch does not
+            synthesize a `status` field**, so a client that tests
+            `data.status === 'complete'` never matches a finished report. (`status` is
+            declared on `AnalysisResult` because the component is shared with the
+            lifecycle views; on this route the complete body simply does not set it.)
+
+        The lightweight branch includes `failed`, which is easy to misread. A
+        failed report is **HTTP 200 with `status: failed` and `errorMessage`
+        populated** — not a 4xx, not a 409, not a 202. Transport status
+        describes the retrieval, never the lifecycle; read `status`.
+
+        While `queued` or `analyzing`, keep polling
+        `GET /api/v1/check/status/{reportId}`.
       security:
         - apiKeyAuth: []
       parameters:
@@ -485,40 +553,56 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Full report (complete) or lightweight status body (in-flight)
+          description: Full report (complete) or lightweight status body (any other status)
           content:
             application/json:
               schema:
-                oneOf:
-                  - $ref: '#/components/schemas/AnalysisResult'
-                  - type: object
-                    description: In-flight async report — analysis not yet written.
-                    required: [reportId, status]
-                    properties:
-                      reportId: { type: string }
-                      address: { type: string }
-                      network: { type: string }
-                      status: { $ref: '#/components/schemas/ReportStatus' }
-                      errorMessage: { type: string, nullable: true }
-                      createdAt: { type: string, format: date-time }
+                $ref: '#/components/schemas/ReportResponse'
               examples:
                 complete:
                   summary: Completed report — full analysis body
                   value:
-                    reportId: "98958045-d736-4bc4-90ed-a717a9258738"
-                    address: "0x742d35CC6634C0532925a3b844bc454e4438F44e"
-                    network: eth
-                    riskScore: 5
-                    riskLevel: low
-                    createdAt: "2026-04-26T22:30:12Z"
-                inFlight:
-                  summary: Async report still being analysed
+                    success: true
+                    data:
+                      reportId: "98958045-d736-4bc4-90ed-a717a9258738"
+                      address: "0x742d35CC6634C0532925a3b844bc454e4438F44e"
+                      network: eth
+                      riskScore: 5
+                      riskLevel: low
+                      createdAt: "2026-04-26T22:30:12Z"
+                queued:
+                  summary: Accepted, not started — lightweight body
                   value:
-                    reportId: "98958045-d736-4bc4-90ed-a717a9258738"
-                    address: "0x742d35CC6634C0532925a3b844bc454e4438F44e"
-                    network: eth
-                    status: analyzing
-                    createdAt: "2026-04-26T22:27:30Z"
+                    success: true
+                    data:
+                      reportId: "98958045-d736-4bc4-90ed-a717a9258738"
+                      address: "0x742d35CC6634C0532925a3b844bc454e4438F44e"
+                      network: eth
+                      status: queued
+                      errorMessage: null
+                      createdAt: "2026-04-26T22:27:30Z"
+                analyzing:
+                  summary: Async report still being analysed — lightweight body
+                  value:
+                    success: true
+                    data:
+                      reportId: "98958045-d736-4bc4-90ed-a717a9258738"
+                      address: "0x742d35CC6634C0532925a3b844bc454e4438F44e"
+                      network: eth
+                      status: analyzing
+                      errorMessage: null
+                      createdAt: "2026-04-26T22:27:30Z"
+                failed:
+                  summary: Terminal failure — STILL HTTP 200, lightweight body
+                  value:
+                    success: true
+                    data:
+                      reportId: "98958045-d736-4bc4-90ed-a717a9258738"
+                      address: "0x742d35CC6634C0532925a3b844bc454e4438F44e"
+                      network: eth
+                      status: failed
+                      errorMessage: "Analysis could not be completed for this address."
+                      createdAt: "2026-04-26T22:27:30Z"
         '401':
           description: Unauthorized
         '404':
@@ -571,16 +655,26 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [success, data]
                 properties:
-                  peelChain:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        address: { type: string }
-                        label: { type: string, nullable: true }
-                        riskLevel: { type: string }
-                        depth: { type: integer }
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    required: [peelChain]
+                    properties:
+                      peelChain:
+                        type: [array, "null"]
+                        description: |
+                          `null` when no peel chain was established — the handler returns
+                          `peelChain || null`, so absence of a chain is an explicit null, never
+                          an empty array.
+                        items:
+                          type: object
+                          properties:
+                            address: { type: string }
+                            label: { type: [string, 'null'] }
+                            riskLevel: { type: string }
+                            depth: { type: integer }
         '422':
           $ref: '#/components/responses/ValidationFailed'
           # Includes deep-analysis-unsupported-network example
@@ -647,10 +741,15 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [success, data]
                 properties:
-                  sections:
+                  success: { type: boolean, enum: [true] }
+                  data:
                     type: object
-                    description: "Security checks: ownership, mint, fee, blacklist, proxy, liquidity, holders"
+                    properties:
+                      sections:
+                        type: object
+                        description: "Security checks: ownership, mint, fee, blacklist, proxy, liquidity, holders"
         '422':
           $ref: '#/components/responses/ValidationFailed'
 
@@ -717,14 +816,19 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [success, data]
                 properties:
-                  reportId: { type: string, description: 'Stable UUID for the auto-saved block report. Same value as `reportPublicId`.' }
-                  reportPublicId: { type: string, description: 'Stable UUID for the auto-saved block report.' }
-                  cached: { type: boolean, description: 'True when the response was served from a 24h cache; the report still exists and is linked here.' }
-                  blockNumber: { type: integer }
-                  timestamp: { type: integer }
-                  sandwiches: { type: array, items: { type: object } }
-                  arbitrages: { type: array, items: { type: object } }
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    properties:
+                      reportId: { type: string, description: 'Stable UUID for the auto-saved block report. Same value as `reportPublicId`.' }
+                      reportPublicId: { type: string, description: 'Stable UUID for the auto-saved block report.' }
+                      cached: { type: boolean, description: 'True when the response was served from a 24h cache; the report still exists and is linked here.' }
+                      blockNumber: { type: integer }
+                      timestamp: { type: integer }
+                      sandwiches: { type: array, items: { type: object } }
+                      arbitrages: { type: array, items: { type: object } }
 
   # /api/v1/check/status/{id} — superseded by /api/v1/check/status/{reportId}
   # above (PR #48 / #48.1). Single canonical path; removed the stale
@@ -790,14 +894,19 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [success, data]
                 properties:
-                  reportId: { type: string, description: 'Stable UUID for the auto-saved multi-chain report. Same value as `reportPublicId`.' }
-                  reportPublicId: { type: string, description: 'Stable UUID for the auto-saved multi-chain report.' }
-                  cached: { type: boolean, description: 'True when served from the 5-min user-scoped cache; the linked report still exists.' }
-                  address: { type: string }
-                  activeChains: { type: integer }
-                  totalChains: { type: integer }
-                  chains: { type: array, items: { type: object } }
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    properties:
+                      reportId: { type: string, description: 'Stable UUID for the auto-saved multi-chain report. Same value as `reportPublicId`.' }
+                      reportPublicId: { type: string, description: 'Stable UUID for the auto-saved multi-chain report.' }
+                      cached: { type: boolean, description: 'True when served from the 5-min user-scoped cache; the linked report still exists.' }
+                      address: { type: string }
+                      activeChains: { type: integer }
+                      totalChains: { type: integer }
+                      chains: { type: array, items: { type: object } }
         '410':
           description: Cached scan exists but the original report was deleted, or legacy cache without a report link. Re-run the scan to create a fresh report.
         '429':
@@ -837,10 +946,15 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [success, data]
                 properties:
-                  reportId: { type: integer }
-                  status: { type: string, enum: [analyzing] }
-                  cost: { type: integer, example: 5 }
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    properties:
+                      reportId: { type: integer }
+                      status: { type: string, enum: [analyzing] }
+                      cost: { type: integer, example: 5 }
         '422':
           $ref: '#/components/responses/ValidationFailed'
           # Malformed JSON, null/non-object body, invalid address, or
@@ -864,12 +978,32 @@ paths:
           content:
             application/json:
               schema:
+                description: |
+                  Two reachable variants. While the job is running the LIVE PROGRESS document is
+                  returned from cache as-is, so its properties are whatever the producer wrote.
+                  Once the job has left the cache, the stored summary is returned instead.
+                  Branch on the presence of `compositeRiskLevel`/`compositeRiskScore` rather than
+                  assuming a fixed property set.
                 type: object
+                required: [success, data]
                 properties:
-                  status: { type: string, enum: [analyzing, complete, failed] }
-                  networks: { type: object }
-                  compositeRiskScore: { type: integer }
-
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    anyOf:
+                      - type: object
+                        description: Stored summary (cache miss).
+                        required: [status]
+                        properties:
+                          status:
+                            type: string
+                            description: Defaults to `complete` when the stored row has no status.
+                          compositeRiskScore: { type: [number, "null"] }
+                          compositeRiskLevel: { type: [string, "null"] }
+                      - type: object
+                        description: |
+                          Live progress document, returned verbatim from cache. Deliberately not
+                          constrained — it is written by the background job, not by this route.
+                        additionalProperties: true
   # ── Usage / quota introspection ───────────────────────
   /api/v1/usage:
     get:
@@ -905,6 +1039,7 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [success, data]
                 properties:
                   success: { type: boolean, example: true }
                   data:
@@ -916,9 +1051,8 @@ paths:
                         enum: [free, pro, business, enterprise]
                         example: pro
                       key_type:
-                        type: string
-                        enum: [paid, sandbox]
-                        nullable: true
+                        type: [string, 'null']
+                        enum: [paid, sandbox, null]
                         description: Type of API key. `null` when authenticated via session JWT.
                         example: paid
                       billing_period:
@@ -930,14 +1064,12 @@ paths:
                             enum: [monthly, rolling_24h, none]
                             example: monthly
                           start:
-                            type: string
+                            type: [string, 'null']
                             format: date-time
-                            nullable: true
                             description: ISO-8601 UTC. Null for `rolling_24h` and `none`.
                           end:
-                            type: string
+                            type: [string, 'null']
                             format: date-time
-                            nullable: true
                             description: ISO-8601 UTC. Null for `rolling_24h` and `none`.
                       plan_quota:
                         type: object
@@ -948,13 +1080,11 @@ paths:
                             description: Plan quota checks consumed in current window.
                             example: 12
                           limit:
-                            type: integer
-                            nullable: true
+                            type: [integer, 'null']
                             description: Plan quota cap. `null` for enterprise (unlimited).
                             example: 1000
                           remaining:
-                            type: integer
-                            nullable: true
+                            type: [integer, 'null']
                             description: max(0, limit - used). `null` when limit is null.
                             example: 988
                       purchased_credits:
@@ -1032,7 +1162,7 @@ paths:
                       rate_limit:
                         requests_per_second: 100
         '401':
-          description: Authentication required or invalid API key
+          $ref: '#/components/responses/Unauthorized'
 
   /api/v1/webhook/deliveries:
     get:
@@ -1085,6 +1215,7 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [success, data]
                 properties:
                   success: { type: boolean, example: true }
                   data:
@@ -1105,8 +1236,7 @@ paths:
                               enum: [watchlist_alert, test]
                               example: watchlist_alert
                             alert_id:
-                              type: integer
-                              nullable: true
+                              type: [integer, 'null']
                               description: Linked watchlist_alert id; null for test deliveries.
                             endpoint_host:
                               type: string
@@ -1120,29 +1250,24 @@ paths:
                               minimum: 0
                               example: 1
                             next_retry_at:
-                              type: string
+                              type: [string, 'null']
                               format: date-time
-                              nullable: true
                               description: ISO-8601 UTC. Non-null only when status=retry_scheduled.
                             last_attempt_at:
-                              type: string
+                              type: [string, 'null']
                               format: date-time
-                              nullable: true
                               description: ISO-8601 UTC of most recent delivery attempt.
                             last_http_status:
-                              type: integer
-                              nullable: true
+                              type: [integer, 'null']
                               description: HTTP status from last attempt; null on network-level failure.
                               example: 200
                             last_error_class:
-                              type: string
-                              nullable: true
+                              type: [string, 'null']
                               description: Error category (e.g. http_2xx, http_5xx, http_429, http_4xx_terminal, http_410_gone, AbortError, TypeError). Never carries response body.
                               example: http_2xx
                             delivered_at:
-                              type: string
+                              type: [string, 'null']
                               format: date-time
-                              nullable: true
                               description: ISO-8601 UTC; set once on first 2xx, never cleared.
                             created_at:
                               type: string
@@ -1151,8 +1276,7 @@ paths:
                               type: string
                               format: date-time
                       next_cursor:
-                        type: string
-                        nullable: true
+                        type: [string, 'null']
                         description: Pass to `?cursor=` for the next page; null when no more pages.
         '401':
           description: Authentication required or invalid API key
@@ -1205,6 +1329,10 @@ paths:
         '200':
           description: Investigations list (offset-paged)
 
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvestigationListResponse'
   # ── Watchlist ─────────────────────────────────────────
   /api/watchlist:
     get:
@@ -1223,6 +1351,10 @@ paths:
       responses:
         '200':
           description: Watchlist items with alert counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchlistListResponse'
     post:
       tags: [Watchlist]
       summary: Add address to watchlist
@@ -1255,6 +1387,10 @@ paths:
       responses:
         '201':
           description: Watchlist item created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchlistItemResponse'
         '400':
           description: |
             Missing address/network, an address that fails family validation, or a network
@@ -1287,17 +1423,26 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    id: { type: integer }
-                    address: { type: string }
-                    network: { type: string }
-                    label: { type: string }
-                    category: { type: string }
-                    notes: { type: [string, 'null'] }
-                    createdAt: { type: integer }
+                type: object
+                required: [success, data]
+                properties:
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    required: [items, total, page, limit]
+                    properties:
+                      items:
+                        type: array
+                        description: |
+                          `custom_labels` rows returned VERBATIM — snake_case keys and
+                          unix-second timestamps, the same representation
+                          `PATCH /api/labels/{id}` answers with.
+                        items: { $ref: '#/components/schemas/CustomLabelRow' }
+                      total:
+                        type: integer
+                        description: Matching rows for this account, ignoring `page`/`limit`.
+                      page: { type: integer }
+                      limit: { type: integer }
     post:
       tags: [Labels]
       summary: Create a custom label
@@ -1331,15 +1476,16 @@ paths:
                   maxLength: 500
                   description: Longer values are truncated to 500 characters, not rejected.
       responses:
-        '201':
-          description: Label created
+        '200':
+          description: |
+            Label stored. The handler answers **200**, not 201. It is an UPSERT on
+            `(account, address, network)`: posting an address you have already labelled
+            OVERWRITES that label rather than creating a second one or conflicting, and the
+            stored row is returned either way.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  id: { type: integer }
-
+                $ref: '#/components/schemas/LabelItemResponse'
   /api/labels/{id}:
     patch:
       tags: [Labels]
@@ -1374,7 +1520,12 @@ paths:
                   description: Re-scope the label. Rejected with 400 if outside this list.
                   enum: [eth, bsc, tron, btc, sol, ton, arbitrum, optimism, base, polygon, avalanche, linea, zksync]
       responses:
-        '200': { description: Label updated }
+        '200':
+          description: Label updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LabelItemResponse'
         '400': { description: Unsupported network }
         '404': { description: Label not found }
     delete:
@@ -1388,7 +1539,12 @@ paths:
           required: true
           schema: { type: integer }
       responses:
-        '200': { description: Label deleted }
+        '200':
+          description: Label deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkFlagResponse'
         '404': { description: Label not found }
 
   /api/labels/import:
@@ -1423,10 +1579,31 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [success, data]
                 properties:
-                  imported: { type: integer }
-                  skipped: { type: integer }
-
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    required: [imported, updated, errors]
+                    properties:
+                      imported:
+                        type: integer
+                        description: Rows inserted as new labels.
+                      updated:
+                        type: integer
+                        description: |
+                          Rows that matched an existing `(address, network)` for this account and
+                          were overwritten. The import is an upsert, so a re-import reports
+                          `updated`, not `imported`.
+                      errors:
+                        type: array
+                        description: One entry per rejected row; empty when every row was accepted.
+                        items: { type: string }
+                      warning:
+                        type: string
+                        description: |
+                          Present ONLY when the resulting label count exceeds the plan limit. The
+                          import still succeeded; the warning says some labels may be removed.
   /api/labels/export:
     get:
       tags: [Labels]
@@ -1437,11 +1614,16 @@ paths:
         '200':
           description: JSON array of all user labels
           content:
-            application/json:
+            text/csv:
               schema:
-                type: array
-                items: { type: object }
+                type: string
+                description: |
+                  CSV with the header row `address,network,label,category,notes`, one row per
+                  label, values quoted only when they contain a comma, quote or newline. Sent
+                  with `Content-Disposition: attachment; filename="custom-labels.csv"`.
 
+                  This endpoint does NOT return JSON and is not wrapped in the
+                  `{ success, data }` envelope.
   # ── Notifications ─────────────────────────────────────
   /api/notifications/settings:
     get:
@@ -1456,12 +1638,30 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [success, data]
                 properties:
-                  email_enabled: { type: boolean }
-                  telegram_enabled: { type: boolean }
-                  telegram_chat_id: { type: [string, 'null'] }
-                  webhook_url: { type: [string, 'null'] }
-                  webhook_enabled: { type: boolean }
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    description: |
+                      A flat camelCase PROJECTION of the stored row — not the row itself. The
+                      stored integer flags are coerced to JSON booleans here, and
+                      `telegramConnected` is derived (a chat id is bound), not stored.
+
+                      `PATCH /api/notifications/settings` answers a DIFFERENT shape — the stored
+                      row wrapped in `settings`. The two are not interchangeable.
+                    required: [emailEnabled, telegramEnabled, telegramConnected, webhookUrl, webhookEnabled, dailyDigest]
+                    properties:
+                      emailEnabled: { type: boolean }
+                      telegramEnabled: { type: boolean }
+                      telegramConnected:
+                        type: boolean
+                        description: True when a Telegram chat is bound to this account.
+                      webhookUrl: { type: [string, "null"] }
+                      webhookEnabled: { type: boolean }
+                      dailyDigest:
+                        type: boolean
+                        description: Send one daily summary instead of instant alerts.
     patch:
       tags: [Notifications]
       summary: Update notification settings
@@ -1519,7 +1719,12 @@ paths:
                     Collapse email alerts into one daily summary. Webhooks
                     remain instant regardless of this flag.
       responses:
-        '200': { description: Settings saved }
+        '200':
+          description: Settings saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationSettingsRowResponse'
 
   /api/notifications/test:
     post:
@@ -1535,11 +1740,20 @@ paths:
             application/json:
               schema:
                 type: object
+                description: |
+                  Acknowledges that the test was sent on the ONE channel named in the request.
+                  It does not report per-channel results.
+                required: [success, data]
                 properties:
-                  email: { type: string, enum: [sent, skipped, failed] }
-                  telegram: { type: string, enum: [sent, skipped, failed] }
-                  webhook: { type: string, enum: [sent, skipped, failed] }
-
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    required: [success, message]
+                    properties:
+                      success: { type: boolean, enum: [true] }
+                      message:
+                        type: string
+                        description: 'For example: `Test telegram notification sent`.'
   /api/notifications/telegram/connect:
     post:
       tags: [Notifications]
@@ -1557,7 +1771,12 @@ paths:
               properties:
                 chatId: { type: string }
       responses:
-        '200': { description: Telegram linked }
+        '200':
+          description: Telegram linked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelegramLinkResponse'
         '400': { description: Invalid chat ID }
 
   /api/notifications/telegram/disconnect:
@@ -1567,7 +1786,12 @@ paths:
       security:
         - apiKeyAuth: []
       responses:
-        '200': { description: Telegram unlinked }
+        '200':
+          description: Telegram unlinked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkFlagResponse'
 
   # ── Watchlist (extra) ─────────────────────────────────
   /api/watchlist/{id}:
@@ -1594,7 +1818,12 @@ paths:
                 notify_webhook: { type: boolean }
                 threshold_value: { type: number }
       responses:
-        '200': { description: Item updated }
+        '200':
+          description: Item updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchlistItemResponse'
         '404': { description: Item not found }
     delete:
       tags: [Watchlist]
@@ -1607,7 +1836,12 @@ paths:
           required: true
           schema: { type: integer }
       responses:
-        '200': { description: Item removed }
+        '200':
+          description: Item removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkFlagResponse'
 
   /api/watchlist/{id}/alerts:
     get:
@@ -1631,6 +1865,10 @@ paths:
         '200':
           description: Paginated alerts for this item
 
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchlistAlertListResponse'
   /api/alerts:
     get:
       tags: [Watchlist]
@@ -1649,6 +1887,10 @@ paths:
         '200':
           description: Paginated alerts
 
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertListResponse'
   # ── Graph ─────────────────────────────────────────────
   /api/graph/expand:
     post:
@@ -1694,36 +1936,41 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [nodes, edges]
+                required: [success, data]
                 properties:
-                  nodes:
-                    type: array
-                    items: { $ref: '#/components/schemas/GraphNode' }
-                  edges:
-                    type: array
-                    items: { $ref: '#/components/schemas/GraphEdge' }
-                  outcome:
-                    type: string
-                    enum: [complete, empty_terminal, partial]
-                    description: |
-                      Result classification for a successful (200) expansion:
-                      `complete` (usable, full history), `empty_terminal` (the
-                      provider reliably established there are no additional
-                      connections), or `partial` (usable but incomplete).
-                      A degraded/failed acquisition is NOT returned as 200 — it
-                      surfaces as `503 EXPAND_UNAVAILABLE` (retryable). Optional
-                      and additive; absent on older responses.
-                  partial:
-                    type: boolean
-                    description: |
-                      True when upstream tx fetch hit a per-network cap.
-                      Absent when the full history was scanned.
-                  fetchedTxs:
-                    type: integer
-                    description: Transactions actually fetched from the upstream provider. Present only when `partial = true`.
-                  totalTxs:
-                    type: integer
-                    description: Reported total transaction count for the address (best-effort, may be 0 if unknown). Present only when `partial = true`.
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    required: [nodes, edges]
+                    properties:
+                      nodes:
+                        type: array
+                        items: { $ref: '#/components/schemas/GraphNode' }
+                      edges:
+                        type: array
+                        items: { $ref: '#/components/schemas/GraphEdge' }
+                      outcome:
+                        type: string
+                        enum: [complete, empty_terminal, partial]
+                        description: |
+                          Result classification for a successful (200) expansion:
+                          `complete` (usable, full history), `empty_terminal` (the
+                          provider reliably established there are no additional
+                          connections), or `partial` (usable but incomplete).
+                          A degraded/failed acquisition is NOT returned as 200 — it
+                          surfaces as `503 EXPAND_UNAVAILABLE` (retryable). Optional
+                          and additive; absent on older responses.
+                      partial:
+                        type: boolean
+                        description: |
+                          True when upstream tx fetch hit a per-network cap.
+                          Absent when the full history was scanned.
+                      fetchedTxs:
+                        type: integer
+                        description: Transactions actually fetched from the upstream provider. Present only when `partial = true`.
+                      totalTxs:
+                        type: integer
+                        description: Reported total transaction count for the address (best-effort, may be 0 if unknown). Present only when `partial = true`.
         '503':
           description: |
             `EXPAND_UNAVAILABLE` — the expansion could not be reliably
@@ -1731,35 +1978,6 @@ paths:
             partial with zero usable data). Retryable: the node is not marked
             expanded and the result is not cached.
 
-  /api/graph/csv-import:
-    post:
-      tags: [Graph]
-      summary: Import CSV of transactions into a report graph
-      description: Parses CSV (Etherscan-style export) and merges rows into the report's graph. Triggers full graph reboot in the UI.
-      security:
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [reportId, csv]
-              properties:
-                reportId: { type: string }
-                csv: { type: string, description: "Raw CSV text" }
-      responses:
-        '200':
-          description: Import result
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  rowsParsed: { type: integer }
-                  nodesAdded: { type: integer }
-                  edgesAdded: { type: integer }
-        '400': { description: CSV parse error }
 
 
   # ── Sharing (public) ──────────────────────────────────
@@ -1812,13 +2030,70 @@ paths:
                 reportData: { type: object }
       responses:
         '201':
-          description: Saved
+          description: Token report saved, and a credit was charged.
           content:
             application/json:
               schema:
                 type: object
+                required: [success, data]
                 properties:
-                  id: { type: integer }
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    required: [id, charged]
+                    properties:
+                      id:
+                        type: string
+                        description: |
+                          The report's PUBLIC id (a UUID) — what `GET /api/v1/token/reports`
+                          lists and what later reads accept, NOT the integer row id.
+                      tokenSymbol: { type: [string, "null"] }
+                      securityScore: { type: [number, "null"] }
+                      charged: { type: boolean, enum: [true] }
+        '200':
+          description: |
+            Nothing new was saved and NOTHING WAS CHARGED. Two reachable cases, both 200:
+
+            * **duplicate** — a report for this token already exists, so its id comes back with
+              `duplicate: true`.
+            * **honeypot verification not actionable** — the stored honeypot result was not
+              usable, so `id` is `null`, no report was saved and no credit was taken; the
+              `honeypot` block says why.
+
+            Read `charged` rather than the status code if what you need to know is whether this
+            call cost a credit.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    oneOf:
+                      - type: object
+                        description: Duplicate — the existing report's id is returned.
+                        required: [id, duplicate, charged]
+                        properties:
+                          id: { type: string }
+                          tokenSymbol: { type: [string, "null"] }
+                          securityScore: { type: [number, "null"] }
+                          duplicate: { type: boolean, enum: [true] }
+                          charged: { type: boolean, enum: [false] }
+                      - type: object
+                        description: Honeypot verification was not actionable; nothing saved.
+                        required: [id, duplicate, charged, honeypot, message]
+                        properties:
+                          id: { type: "null" }
+                          duplicate: { type: boolean, enum: [false] }
+                          charged: { type: boolean, enum: [false] }
+                          honeypot:
+                            type: object
+                            required: [status]
+                            properties:
+                              status: { type: string }
+                              reason: { type: [string, "null"] }
+                          message: { type: string }
     get:
       tags: [Saved Reports]
       summary: List saved token reports
@@ -1837,6 +2112,10 @@ paths:
         '200':
           description: Saved token reports (offset-paged)
 
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenReportListResponse'
   /api/v1/block/reports:
     post:
       tags: [Saved Reports]
@@ -1855,14 +2134,32 @@ paths:
                 network: { type: string }
                 reportData: { type: object }
       responses:
-        '201':
-          description: Saved
+        '200':
+          description: |
+            Report saved. The handler answers **200**, not 201 — every success path resolves an
+            EXISTING analysis (optionally renaming it), and no code path answers 201. A legacy
+            cached analysis with no public id cannot be saved and answers
+            `410 LEGACY_CACHE_NO_SAVE`.
           content:
             application/json:
               schema:
                 type: object
+                required: [success, data]
                 properties:
-                  id: { type: integer }
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    required: [id, reportId, reportPublicId]
+                    properties:
+                      id:
+                        type: integer
+                        description: Integer row id.
+                      reportId:
+                        type: [string, "null"]
+                        description: The report's public id (UUID) — prefer this for later reads.
+                      reportPublicId:
+                        type: [string, "null"]
+                        description: Same value as `reportId`; both keys are emitted.
     get:
       tags: [Saved Reports]
       summary: List saved block reports
@@ -1881,6 +2178,10 @@ paths:
         '200':
           description: Saved block reports (offset-paged)
 
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlockReportListResponse'
   /api/v1/block/reports/{id}:
     get:
       tags: [Saved Reports]
@@ -1904,6 +2205,10 @@ paths:
       responses:
         '200':
           description: Saved block report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlockReportResponse'
         '401':
           description: Unauthorized
         '404':
@@ -1926,14 +2231,32 @@ paths:
                 address: { type: string }
                 reportData: { type: object }
       responses:
-        '201':
-          description: Saved
+        '200':
+          description: |
+            Report saved. The handler answers **200**, not 201 — every success path resolves an
+            EXISTING analysis (optionally renaming it), and no code path answers 201. A legacy
+            cached analysis with no public id cannot be saved and answers
+            `410 LEGACY_CACHE_NO_SAVE`.
           content:
             application/json:
               schema:
                 type: object
+                required: [success, data]
                 properties:
-                  id: { type: integer }
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    required: [id, reportId, reportPublicId]
+                    properties:
+                      id:
+                        type: integer
+                        description: Integer row id.
+                      reportId:
+                        type: [string, "null"]
+                        description: The report's public id (UUID) — prefer this for later reads.
+                      reportPublicId:
+                        type: [string, "null"]
+                        description: Same value as `reportId`; both keys are emitted.
     get:
       tags: [Saved Reports]
       summary: List saved multi-chain reports
@@ -1952,6 +2275,10 @@ paths:
         '200':
           description: Saved multi-chain reports (offset-paged)
 
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MultichainReportListResponse'
   /api/v1/multichain/reports/{id}:
     get:
       tags: [Saved Reports]
@@ -1975,6 +2302,10 @@ paths:
       responses:
         '200':
           description: Saved multi-chain report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MultichainReportResponse'
         '401':
           description: Unauthorized
         '404':
@@ -1995,6 +2326,10 @@ paths:
       responses:
         '200':
           description: Full investigation with messages and tool calls
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvestigationResponse'
         '404': { description: Not found }
 
     delete:
@@ -2013,7 +2348,12 @@ paths:
           required: true
           schema: { type: integer }
       responses:
-        '200': { description: Archived }
+        '200':
+          description: Archived
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvestigationArchivedResponse'
         '404': { description: Not found }
 
 # ── Outbound webhook callbacks ──────────────────────────────────────────────
@@ -2074,6 +2414,53 @@ components:
       description: API key (create at https://app.onchainrisk.io/dashboard/api-keys)
 
   responses:
+    Unauthorized:
+      description: |
+        Missing or invalid API key. `requireAuth` returns `unauthorized(...)` =
+        `utils/response.js::error(message, 401, 'UNAUTHORIZED')`, so the body is
+        ALWAYS the standard envelope with an OBJECT `error` — it is never bodiless
+        and never a bare string.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              error: { $ref: '#/components/schemas/GenericError' }
+          example:
+            success: false
+            error:
+              code: UNAUTHORIZED
+              message: Authentication required
+
+    RateLimited:
+      description: |
+        Rate limit or quota exhausted. The body is the standard envelope with an
+        OBJECT `error`: `utils/response.js::error(...)` for a plan/credit rejection
+        (`code` e.g. `NO_CREDITS`, `PLAN_LIMIT_REACHED`) and `rateLimited(...)` for
+        the per-IP/per-key limiter (`code: RATE_LIMITED`, plus `X-RateLimit-*`
+        headers). This status is never bodiless.
+      headers:
+        X-RateLimit-Limit:
+          schema: { type: integer }
+          description: Sent by the request limiter branch (`rateLimited`), not by quota rejections.
+        X-RateLimit-Remaining:
+          schema: { type: integer }
+        X-RateLimit-Reset:
+          schema: { type: string, format: date-time }
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              error: { $ref: '#/components/schemas/GenericError' }
+          example:
+            success: false
+            error:
+              code: RATE_LIMITED
+              message: Rate limit exceeded
+
     ValidationFailed:
       description: |
         Address failed validation before any scan was performed. HTTP status
@@ -2458,6 +2845,89 @@ components:
           tx_hash: "0xabc123..."
           explorer_url: "https://etherscan.io/tx/0xabc123..."
 
+    ReportAccess:
+      type: object
+      description: |
+        Customer-facing READ-access DTO for the analysis artifact
+        (`utils/report-egress-access.js::buildAccessDTO`). Egress metadata only — it is
+        never persisted into the report and never appears inside the preview projection.
+
+        `state` says what the caller is entitled to SEE:
+          - `FULL`               — monetization inactive / grandfathered, or a request-time
+                                   full-capability override. Not purchasable.
+          - `PERMANENT_OWNED`    — a durable unlock exists for this artifact.
+          - `SUBSCRIPTION_FULL`  — full access for the life of the current subscription.
+          - `PREVIEW`            — no entitlement; the body is the preview projection.
+
+        `temporarilyUnavailable: true` marks a FAIL-CLOSED preview (an entitlement or
+        subscription lookup error), which is NOT the same as a genuine no-entitlement
+        preview: the former is never purchasable.
+      required: [state, unlockable]
+      properties:
+        state:
+          type: string
+          enum: [FULL, PERMANENT_OWNED, SUBSCRIPTION_FULL, PREVIEW]
+        unlockable:
+          type: boolean
+          description: |
+            `true` only for a genuine no-entitlement PREVIEW over a persisted, deliverable
+            artifact. An unpersisted fresh re-scan is never unlockable — there is no durable
+            row for `POST /api/billing/artifact-unlock` to target.
+        temporarilyUnavailable:
+          type: boolean
+          description: Present and `true` only on a fail-closed preview.
+        unlockBasePriceDisplay:
+          type: string
+          description: |
+            Presentation-only base price, present only when `unlockable` is `true`.
+            Settlement is by invoice; never treat this as the charged amount.
+        unlockCurrency:
+          type: string
+          enum: [USDT]
+          description: Present only when `unlockBasePriceDisplay` is.
+
+    ReportExport:
+      type: object
+      description: |
+        EXPORT capability for this artifact (`utils/export-authority.js::buildExportDTO`) — a
+        separate capability from read access, clamped upstream so the two can never contradict
+        each other within one response (a PREVIEW read never reports full export).
+      required: [full]
+      properties:
+        full:
+          type: boolean
+          description: Whether the caller may export the full artifact.
+        temporarilyUnavailable:
+          type: boolean
+          description: Present and `true` when the export authority could not be resolved (fail-closed).
+
+    GenericError:
+      type: object
+      description: |
+        The runtime's UNIVERSAL error object — what `utils/response.js::error()`
+        serializes for every non-validation failure (401, 403, 404, 429, 500, 503 …):
+
+        ```json
+        { "success": false, "error": { "code": "UNAUTHORIZED", "message": "Authentication required" } }
+        ```
+
+        Deliberately has NO `code` enum: the codes are an open, growing set and
+        pinning them here would publish a closed list the runtime does not honour.
+        `ErrorResponse` is the narrower validation-family view of the same object
+        (its `code` enum is `VALIDATION_ERROR` only) and is kept separate so the 422
+        contract stays as tight as it is today.
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable error code, e.g. `UNAUTHORIZED`, `RATE_LIMITED`, `NO_CREDITS`.
+        message:
+          type: string
+          description: Short human-readable summary. Never carries provider or internal detail.
+        details:
+          type: object
+          description: Optional structured context. Absent unless the failing path supplies it.
+
     ErrorResponse:
       type: object
       description: |
@@ -2549,16 +3019,152 @@ components:
       properties:
         status: { type: string, enum: [historical_attribution_invalidated] }
         curation: { type: string, minLength: 1, example: "M2-C2-2026-08-04" }
+    # ── #735 Slice 1A R1 — derived from the PAID RUNTIME SERIALIZERS in web/api/main.py.
+    #
+    # The first version of these three was copied from openapi-sandbox.yaml on the assumption
+    # that it described the same runtime objects. It does not: the sandbox definitions are
+    # stale, and copying them reversed the one direction this slice exists to enforce
+    # (runtime → spec). Every property below is read off the `.append({...})` call named in
+    # each description, and nullability comes from the dataclasses in ethforensics/types.py.
+    #
+    # No `required` list: AnalysisResult declares none, and while both tx_history branches
+    # emit the ten common keys unconditionally, the Worker accepts `data.transactionHistory ||
+    # data.transaction_history` and so does not prove this is the only producer. Promising
+    # required keys on that basis would be inventing a guarantee.
+    #
+    # NOTE: openapi-sandbox.yaml still carries the OLD shapes under these same names. That
+    # divergence is deliberate for now — the sandbox repair is a later canonical-contract
+    # compatibility fix, and no current validator forces it.
+    CounterpartyLabel:
+      type: object
+      description: |
+        R2. The PUBLIC egress shape of `counterpartyLabel`, which is an OBJECT, not a string.
+        `web/api/main.py` assigns `label_db.lookup(...)` directly —
+        `LabelDatabase.lookup() -> Optional[LabelEntry]` (ethforensics/labels/loader.py:1356)
+        — with no `.label` extraction and no `asdict`. Unlike `topCounterparties[].label`,
+        `clusters[].members[].label`, top-level `labels` and `fundedBy.label`, which the Worker
+        passes through `normalizeLabel()`, `counterpartyLabel` is touched NOWHERE in the Worker:
+        both the sync path (routes/check.js) and the async path (consumer.js) forward
+        `transaction_history` / `token_transfer_history` verbatim. So the dataclass reaches
+        paying customers as an object.
+
+        Documented, deliberately NOT fixed. Normalising it would change an existing paid
+        response type for the 2 live paid integrations, which #735's standing rule forbids —
+        sandbox adapts to paid, not paid to sandbox. Slice 1 records current truth even where
+        current truth is ugly; any normalisation is a separate compatibility/versioning
+        decision. `/api/analyze` declares no `response_model` and no `exclude_none`, so all five
+        dataclass fields serialise, including `custom_label: null`.
+
+        No `required` list: the keys are guaranteed only by dataclass serialisation on this one
+        path and nothing pins that, so adding a `response_model` or `exclude_none` upstream
+        would silently break a `required` promise made here.
+      properties:
+        address: { type: string }
+        label: { type: string }
+        category: { type: string }
+        source: { type: string, description: "Dataclass default is \"manual\"." }
+        custom_label:
+          type: [string, 'null']
+          description: "`Optional[str] = None` — a preserved user note on a protected high-risk record; null for every other record. Snake_case because the dataclass field name is serialised as-is."
+    Transaction:
+      type: object
+      description: |
+        Native transaction entry. Serializer: `tx_history.append({...})` in web/api/main.py —
+        two branches, a UTXO branch and the EVM/account branch, which share the first ten
+        properties. The `utxo*` / `feeSats` / `balanceDeltaSats` properties are emitted ONLY
+        by the UTXO branch, so they are absent on other networks rather than null.
+      properties:
+        hash: { type: string }
+        timestamp: { type: integer, description: Unix seconds. }
+        direction:
+          type: string
+          # EVM/account branch emits in|out. UTXO branch maps flow_kind through _dir_map:
+          # OUTGOING→out, INCOMING→in, COINBASE→in, SELF→self, MIXED→mixed, defaulting to
+          # mixed — so `self` and `mixed` are reachable on UTXO networks only.
+          enum: [in, out, self, mixed]
+        counterparty:
+          type: string
+          description: May be the empty string when no single counterparty is attributable (UTXO MIXED).
+        counterpartyLabel:
+          # 3.1 oneOf-with-null, the idiom this spec already uses for destinationEntitySummary,
+          # exchangeDeposits and honeypot. R1 wrongly declared this a nullable STRING.
+          oneOf:
+            - $ref: '#/components/schemas/CounterpartyLabel'
+            - type: 'null'
+          description: "Raw `LabelEntry` object from `label_db.lookup(...)`, or null when the counterparty is unlabelled or no label DB is loaded. NOT a string — see CounterpartyLabel."
+        value:
+          type: [string, 'null']
+          description: "Formatted amount. NULL on a UTXO row whose transfer value is not attributable (`format_value(_transfer) if _transfer is not None else None`)."
+        valueWei:
+          type: [string, 'null']
+          description: Base-unit amount as a decimal string. Null in the same non-attributable UTXO case.
+        isError: { type: boolean }
+        methodId:
+          type: string
+          description: "`t.method_id or ''` — empty string rather than null; always '' on UTXO rows."
+        functionName:
+          type: string
+          description: "`t.function_name or ''` — empty string rather than null; always '' on UTXO rows."
+        utxoFlowKind:
+          type: string
+          enum: [OUTGOING, INCOMING, COINBASE, SELF, MIXED]
+          description: UTXO rows only. Raw `flow_kind` before the direction mapping.
+        utxoValueBasis:
+          type: string
+          enum: [exact_transfer, received, coinbase, self_zero, not_attributable]
+          description: UTXO rows only. How `value` was derived, or that it could not be.
+        utxoAttributionExact:
+          type: boolean
+          description: UTXO rows only. `outbound_attribution_exact or inbound_source_attribution_exact`; both default False, so never null.
+        utxoExternalOutputCount: { type: integer, description: UTXO rows only. }
+        feeSats: { type: string, description: UTXO rows only. Decimal string. }
+        balanceDeltaSats: { type: string, description: UTXO rows only. Decimal string; the subject's net balance change. }
+    TokenTransfer:
+      type: object
+      description: |
+        Token transfer entry. Serializer: `token_tx_history.append({...})` in web/api/main.py
+        (most recent 50). `tokenSymbol` / `tokenName` are non-Optional on the TokenTransfer
+        dataclass, so they are strings rather than nullable.
+      properties:
+        hash: { type: string }
+        timestamp: { type: integer, description: Unix seconds. }
+        direction: { type: string, enum: [in, out] }
+        counterparty: { type: string }
+        counterpartyLabel:
+          oneOf:
+            - $ref: '#/components/schemas/CounterpartyLabel'
+            - type: 'null'
+          description: Same raw `LabelEntry` object as on Transaction, or null.
+        tokenSymbol: { type: string }
+        tokenName: { type: string }
+        value: { type: string, description: "`str(t.value_formatted)` — decimal string, not the raw base-unit amount." }
+    ContractDeployment:
+      type: object
+      description: |
+        Contract deployed by the address. Serializer: `deployments_data.append({...})` in
+        web/api/main.py. Note `timestamp` here is an ISO-8601 STRING
+        (`datetime.fromtimestamp(...).isoformat()`), unlike the integer timestamps on
+        Transaction / TokenTransfer.
+      properties:
+        txHash: { type: string }
+        timestamp: { type: string, format: date-time }
+        contractAddress: { type: string }
+        contractName:
+          type: [string, 'null']
+          description: "`Optional[str] = None` on the dataclass — present only when the contract is verified."
+        isVerified: { type: boolean }
+        gasUsed: { type: integer }
+        gasCost: { type: string, description: "Human-formatted, e.g. \"0.0012 ETH\"." }
+        gasCostWei: { type: integer, description: "`gas_used * gas_price`, a JSON number." }
     AnalysisResult:
       type: object
       properties:
         address: { type: string }
         network: { type: string }
-        riskScore: { type: integer, minimum: 0, maximum: 100, nullable: true, description: "Null while async scan is queued/analyzing." }
-        riskLevel: { type: string, enum: [critical, high, medium, low], nullable: true }
+        riskScore: { type: [integer, 'null'], minimum: 0, maximum: 100, description: "Null while async scan is queued/analyzing." }
+        riskLevel: { type: [string, 'null'], enum: [critical, high, medium, low, null] }
         riskContributions:
-          type: object
-          nullable: true
+          type: [object, 'null']
           additionalProperties:
             type: integer
             minimum: 0
@@ -2575,8 +3181,7 @@ components:
             mixer, transit_massive, ...) are applied separately. Surfacing
             which floor fired is planned for a future PR.
         riskWeights:
-          type: object
-          nullable: true
+          type: [object, 'null']
           additionalProperties:
             type: number
             minimum: 0
@@ -2646,8 +3251,7 @@ components:
             See `riskConfidenceDetails` for the specific reasons that
             drove the tier on this particular response.
         riskConfidenceDetails:
-          type: object
-          nullable: true
+          type: [object, 'null']
           description: |
             Structured explanation of why a particular `riskConfidence`
             tier was selected. Null on pre-explainability Modal versions
@@ -2659,8 +3263,7 @@ components:
               enum: [high, medium, low]
               description: Same value as `riskConfidence`.
             completeness_pct:
-              type: number
-              nullable: true
+              type: [number, 'null']
               minimum: 0
               maximum: 100
               description: |
@@ -2692,8 +3295,7 @@ components:
         status:
           $ref: '#/components/schemas/ReportStatus'
         errorMessage:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: Populated when `status='failed'`.
         createdAt:
           type: string
@@ -2703,12 +3305,57 @@ components:
           type: object
           properties:
             type: { type: string, enum: [eoa, contract, smart_contract, unknown], description: "Address type. `contract` and `smart_contract` are aliases — both mean a deployed contract; clients should treat them equivalently." }
-            balance: { type: string, example: "1.5 ETH" }
-            balanceUsd: { type: number, nullable: true, example: 3045.50 }
-            nativePriceUsd: { type: number, nullable: true, example: 2030.33 }
-            txCount: { type: integer }
-            firstSeen: { type: string, nullable: true }
-            lastSeen: { type: string, nullable: true }
+            balance:
+              # OpenAPI 3.1 union rather than legacy `nullable: true`: this document declares
+              # 3.1, where `nullable` is not a valid keyword (every existing use of it is part
+              # of the pre-existing redocly `struct` baseline, untouched here).
+              type: [string, "null"]
+              example: "1.5 ETH"
+              description: |
+                Native balance, formatted with the network unit. `null` means the provider
+                established NO balance (absent/failed/unknown upstream) and MUST NOT be
+                treated as zero — the analyzer deliberately does not substitute a synthetic
+                `"0"`, so a provider-confirmed zero is the string `"0"` while unknown is
+                `null`.
+            balanceUsd: { type: [number, 'null'], example: 3045.50 }
+            nativePriceUsd: { type: [number, 'null'], example: 2030.33 }
+            txCount:
+              type: [integer, "null"]       # 3.1 union — see the note on `balance` above
+              description: |
+                Lifetime transaction count. `null` means the provider established NO count
+                (absent/failed/unknown upstream) and MUST NOT be treated as zero; a
+                provider-confirmed zero is `0`.
+            firstSeen: { type: [string, 'null'] }
+            lastSeen: { type: [string, 'null'] }
+            totalReceived:
+              type: [string, 'null']
+              example: "9.96239376 BTC"
+              description: |
+                Cumulative native amount EVER received by this address, formatted with the
+                network unit. Present only for networks whose chain summary establishes
+                lifetime totals (currently the UTXO chains: `btc`, `ltc`); `null` or absent
+                means UNKNOWN and MUST NOT be treated as zero.
+
+                This is the forensically meaningful figure for a swept address: `balance` can
+                be a correct `0` while this shows that ~10 BTC moved through. It is a lifetime
+                total from the chain summary, NOT a sum of the returned `transactionHistory`
+                (which is a capped window and would understate it).
+            totalReceivedRaw:
+              type: [string, 'null']
+              example: "996239376"
+              description: "`totalReceived` in the smallest native unit (satoshis for BTC, litoshis for LTC), as a string to avoid precision loss."
+            totalSent:
+              type: [string, 'null']
+              example: "9.96239376 BTC"
+              description: "Cumulative native amount EVER sent from this address. Same semantics and caveats as `totalReceived`."
+            totalSentRaw:
+              type: [string, 'null']
+              example: "996239376"
+              description: "`totalSent` in the smallest native unit (satoshis for BTC, litoshis for LTC), as a string."
+            nativeFlowSource:
+              type: [string, 'null']
+              example: "mempool_chain_stats"
+              description: "Which authority established the cumulative totals, so proof is distinguishable from assumption. `null` when they were not established."
         patternFlags:
           type: array
           items: { type: string }
@@ -2743,7 +3390,7 @@ components:
             type: object
             properties:
               address: { type: string }
-              label: { type: string, nullable: true }
+              label: { type: [string, 'null'] }
               category: { $ref: '#/components/schemas/CategoryEnum' }
               txCount: { type: integer }
               totalValue: { type: string }
@@ -2773,17 +3420,15 @@ components:
               valueRaw: "2835000000"
               unit: sun
         fundedBy:
-          type: object
-          nullable: true
+          type: [object, 'null']
           properties:
             address: { type: string }
-            label: { type: string, nullable: true }
+            label: { type: [string, 'null'] }
             txHash: { type: string }
             timestamp: { type: integer }
             value: { type: string }
         timing:
-          type: object
-          nullable: true
+          type: [object, 'null']
           description: |
             Transaction timing analysis. Includes legacy `botFlags` (display
             strings) and `botFlagDetails` (localization-friendly metadata,
@@ -2807,7 +3452,7 @@ components:
                   defaultEn: "Active across 22+ hours daily — likely automated"
                   severity: medium
                   description: "Address is active for ~22+ hours per day, suggesting automation."
-        crossChain: { type: object, nullable: true }
+        crossChain: { type: [object, 'null'] }
         exchangeDeposits:
           oneOf:
             - $ref: '#/components/schemas/ExchangeDepositsValid'
@@ -2837,10 +3482,10 @@ components:
             Aggregate over detected destination entities, or null when
             unavailable, in sandbox, or the owner's current effective plan is
             not entitled.
-        defiSwaps: { type: object, nullable: true }
-        nftWashTrading: { type: object, nullable: true }
-        osintIntelligence: { type: object, nullable: true }
-        tokenFlow: { type: object, nullable: true }
+        defiSwaps: { type: [object, 'null'] }
+        nftWashTrading: { type: [object, 'null'] }
+        osintIntelligence: { type: [object, 'null'] }
+        tokenFlow: { type: [object, 'null'] }
         contractAnalysis:
           $ref: '#/components/schemas/ContractAnalysis'
         contractInfo:
@@ -2851,16 +3496,54 @@ components:
           oneOf:
             - $ref: '#/components/schemas/Honeypot'
             - type: 'null'
-        railgun: { type: object, nullable: true }
-        clusters: { type: object, nullable: true }
-        usdPrices: { type: object, nullable: true }
-        tokenTransferSupported: { type: boolean, nullable: true, description: "Whether token transfer data is available for this network" }
-        tokenFlowIncomplete: { type: boolean, nullable: true, description: "True if token flow data is partial due to API failures" }
-        walletArchetype: { type: string, nullable: true, enum: [automated, distribution, exchange_like, mev_like, unclassified], description: "SOL wallet behavior classification" }
-        partialReason:
+        railgun: { type: [object, 'null'] }
+        clusters: { type: [object, 'null'] }
+        usdPrices: { type: [object, 'null'] }
+        # ── #735 Slice 1A ────────────────────────────────────────────────────────
+        # Eight fields the paid runtime has always returned and this spec omitted. Added as
+        # DOCUMENTATION only: every shape is read off the current response builder in
+        # web/api/src/routes/check.js, with the runtime expression quoted. The runtime is
+        # unchanged, AnalysisResult declares no `required` list, and all eight are optional —
+        # so no existing paid client is affected.
+        labels:
+          type: array
+          # `data.label ? [normalizeLabel(data.label)] : []` — always an array, never null, at
+          # most one entry today. A null ITEM is reachable: normalizeLabel returns
+          # `lbl.label || lbl.name || null`, so a truthy label object carrying neither key
+          # yields `[null]`. Documented rather than smoothed over — a client typing this as
+          # non-nullable strings would break on exactly that response.
+          items: { type: [string, 'null'] }
+          description: Address labels. At most one entry today; an entry may be null when the upstream label object carries neither `label` nor `name`.
+        transactionHistory:
+          type: array
+          items: { $ref: '#/components/schemas/Transaction' }
+          description: "Native transaction entries. Runtime: `data.transactionHistory || data.transaction_history || []` — always an array, never null."
+        tokenTransferHistory:
+          type: array
+          items: { $ref: '#/components/schemas/TokenTransfer' }
+          description: "Token transfer entries. Runtime: `data.tokenTransferHistory || data.token_transfer_history || []` — always an array, never null."
+        contractDeployments:
+          type: array
+          items: { $ref: '#/components/schemas/ContractDeployment' }
+          description: "Contracts deployed by this address. Runtime: `data.contract_deployments || []` — always an array, never null."
+        tokenScore: { type: [object, 'null'], description: "Token scoring detail when the subject is a token contract. Runtime: `data.token_score || null`." }
+        temporalClusters: { type: [object, 'null'], description: "Temporal clustering detail. Runtime: `data.temporal_clusters || null`." }
+        riskNote: { type: [string, 'null'], description: "Free-text qualifier on the score. Runtime: `data.risk_note || null`." }
+        dataQuality:
           type: string
-          nullable: true
-          enum: [timeout, limit_cap, limit_cap_assumed, api_error, btc_tx_count_exceeds_full_fetch_limit, ltc_tx_count_exceeds_full_fetch_limit, heavy_contract_overview]
+          # Runtime: `data.data_quality || 'full'`. The enum is the OBSERVED vocabulary — 'full'
+          # is the Worker's own default and the backend emits 'partial' and 'limited'
+          # (web/api/main.py). 'degraded' appears nowhere in the runtime; openapi-sandbox.yaml
+          # claims [full, partial, degraded], which is wrong in both directions. Reported in the
+          # Slice 1 return; not changed here, because Slice 1 documents paid truth only.
+          enum: [full, partial, limited]
+          description: Completeness class of the underlying data. `full` is the default when the backend sends none.
+        tokenTransferSupported: { type: [boolean, 'null'], description: "Whether token transfer data is available for this network" }
+        tokenFlowIncomplete: { type: [boolean, 'null'], description: "True if token flow data is partial due to API failures" }
+        walletArchetype: { type: [string, 'null'], enum: [automated, distribution, exchange_like, mev_like, unclassified, null], description: "SOL wallet behavior classification" }
+        partialReason:
+          type: [string, 'null']
+          enum: [timeout, limit_cap, limit_cap_assumed, api_error, btc_tx_count_exceeds_full_fetch_limit, ltc_tx_count_exceeds_full_fetch_limit, heavy_contract_overview, null]
           description: |
             Reason for partial transaction data. Mirrors `dataCompleteness.partialReason` for clients
             that only inspect the top level. `heavy_contract_overview` indicates the address is a
@@ -2868,6 +3551,17 @@ components:
             metadata only — full transaction-level tracing is not available for this contract.
         analysisTime: { type: integer, description: "Milliseconds" }
         timestamp: { type: string, format: date-time }
+        coverage:
+          $ref: '#/components/schemas/Coverage'
+        access:
+          $ref: '#/components/schemas/ReportAccess'
+        export:
+          $ref: '#/components/schemas/ReportExport'
+        name:
+          type: [string, 'null']
+          description: |
+            Caller-assigned report name. Emitted by `GET /api/reports/{id}` only
+            (`row.name || null`); the fresh-scan responses do not carry it.
 
     ReportStatus:
       type: string
@@ -2879,12 +3573,528 @@ components:
           `failed`    — terminal error; `errorMessage` populated.
       enum: [queued, analyzing, complete, failed]
 
+    # ───────────────────────────────────────────────────────────────────────────────
+    # #735 Batch 1B — success bodies for 19 published operations that declared none.
+    #
+    # Every shape below is read off the handler's own return construction, not from one
+    # observed response: token-check.js / block.js / multichain.js / investigate.js +
+    # ai/orchestrator.js / watchlist.js / labels.js, plus schema.sql for the column types the
+    # row-returning routes pass through verbatim.
+    #
+    # Two runtime facts the reader needs. First, `utils/response.js` exports `json` as an
+    # ALIAS of `success`, so these routes do carry the standard `{ success, data }` envelope
+    # even though they call `json(...)`. Second, several of them return a D1 ROW as-is, so the
+    # payload is snake_case and shaped by the table — that is the contract, and it is recorded
+    # here rather than tidied into camelCase.
+    # ───────────────────────────────────────────────────────────────────────────────
+
+    OkFlagResponse:
+      type: object
+      description: |
+        Bare acknowledgement: `DELETE /api/watchlist/{id}`, `DELETE /api/labels/{id}` and
+        `POST /api/notifications/telegram/disconnect` all answer `{ "success": true, "data":
+        { "success": true } }`. The inner `success` is the handler's own payload
+        (`json({ success: true })`) and is NOT the envelope flag — reading `data.success`
+        rather than the envelope is what a client should do here.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [success]
+          properties:
+            success: { type: boolean, enum: [true] }
+
+    TokenReportListItem:
+      type: object
+      description: Projected list row — NOT the stored token report; `reportData` is not included.
+      properties:
+        id: { type: integer }
+        address: { type: string }
+        network: { type: string }
+        tokenName: { type: [string, "null"] }
+        tokenSymbol: { type: [string, "null"] }
+        securityScore: { type: [number, "null"] }
+        isHoneypot:
+          type: boolean
+          description: Coerced from the stored integer, so it is always a boolean here (never null).
+        name: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+
+    TokenReportListResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [reports, total]
+          properties:
+            reports: { type: array, items: { $ref: '#/components/schemas/TokenReportListItem' } }
+            total:
+              type: integer
+              description: Total rows for this account, ignoring `limit`/`offset`.
+
+    BlockReportListItem:
+      type: object
+      properties:
+        id: { type: integer }
+        blockNumber: { type: integer }
+        network: { type: string }
+        name: { type: [string, "null"] }
+        sandwichCount: { type: [integer, "null"] }
+        arbitrageCount: { type: [integer, "null"] }
+        jitCount: { type: [integer, "null"] }
+        liquidationCount: { type: [integer, "null"] }
+        txCount: { type: [integer, "null"] }
+        createdAt: { type: string, format: date-time }
+
+    BlockReportListResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [reports, total]
+          properties:
+            reports: { type: array, items: { $ref: '#/components/schemas/BlockReportListItem' } }
+            total: { type: integer }
+
+    BlockReportResponse:
+      type: object
+      description: |
+        The stored block report. `{id}` accepts either the UUID `public_id` that `POST
+        /api/v1/block/reports` returned or the legacy integer `id`; a purely numeric ref is
+        read as the legacy id and anything else as a `public_id`, so an unknown ref simply
+        404s.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [id, blockNumber, network, reportData, createdAt]
+          properties:
+            id: { type: integer }
+            reportPublicId: { type: [string, "null"] }
+            blockNumber: { type: integer }
+            network: { type: string }
+            name: { type: [string, "null"] }
+            reportData:
+              type: object
+              additionalProperties: true
+              description: |
+                The stored analysis payload, returned as parsed JSON. Deliberately NOT
+                constrained here: it is whatever the analyzer wrote at save time, and an
+                unparsable or absent payload is returned as `{}` rather than failing the read.
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+
+    MultichainReportListItem:
+      type: object
+      properties:
+        id: { type: integer }
+        address: { type: string }
+        name: { type: [string, "null"] }
+        activeChains: { type: [integer, "null"] }
+        totalChains: { type: [integer, "null"] }
+        status:
+          type: string
+          description: Defaults to `complete` when the stored row has no status.
+        compositeRiskScore: { type: [number, "null"] }
+        compositeRiskLevel: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+
+    MultichainReportListResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [reports, total]
+          properties:
+            reports: { type: array, items: { $ref: '#/components/schemas/MultichainReportListItem' } }
+            total: { type: integer }
+
+    MultichainReportResponse:
+      type: object
+      description: |
+        The stored multi-chain report. `{id}` accepts the UUID `public_id` or the legacy
+        integer `id`, exactly as the block-report read does.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [id, address, status, reportData, createdAt]
+          properties:
+            id: { type: integer }
+            reportPublicId: { type: [string, "null"] }
+            address: { type: string }
+            activeChains: { type: [integer, "null"] }
+            totalChains: { type: [integer, "null"] }
+            status: { type: string }
+            compositeRiskScore: { type: [number, "null"] }
+            compositeRiskLevel: { type: [string, "null"] }
+            name: { type: [string, "null"] }
+            reportData:
+              type: object
+              additionalProperties: true
+              description: Parsed stored payload; `{}` when absent or unparsable. Not constrained.
+            createdAt: { type: string, format: date-time }
+
+    InvestigationListItem:
+      type: object
+      description: |
+        A D1 row returned VERBATIM by the list query, so the keys are snake_case and the
+        joined subject columns are null for every subject kind this row is not. Exactly one
+        subject family is populated per row: report (`report_*`), block (`block_*`), token
+        (`token_*`) or tokenized asset (`rwa_*`). `messages` is NOT included in the list.
+      properties:
+        id: { type: integer }
+        title: { type: [string, "null"] }
+        status: { type: string, enum: [active, limit_reached, archived] }
+        message_count: { type: [integer, "null"] }
+        tool_calls_count: { type: [integer, "null"] }
+        tokens_used: { type: [integer, "null"] }
+        report_id: { type: [string, "null"] }
+        report_type: { type: [string, "null"] }
+        created_at: { type: integer, description: "Unix seconds, as stored." }
+        updated_at: { type: integer, description: "Unix seconds, as stored." }
+        report_address: { type: [string, "null"] }
+        report_network: { type: [string, "null"] }
+        report_risk_score: { type: [integer, "null"] }
+        report_risk_level: { type: [string, "null"] }
+        block_number: { type: [integer, "null"] }
+        block_network: { type: [string, "null"] }
+        block_name: { type: [string, "null"] }
+        token_address: { type: [string, "null"] }
+        token_network: { type: [string, "null"] }
+        token_symbol: { type: [string, "null"] }
+        token_score: { type: [number, "null"] }
+        rwa_name: { type: [string, "null"] }
+        rwa_contract: { type: [string, "null"] }
+        rwa_chain_id: { type: [integer, "null"] }
+
+    InvestigationListResponse:
+      type: object
+      description: |
+        Archived investigations are excluded. A tokenized-asset investigation is visible only
+        while the caller currently has RWA access, and the SAME predicate drives `total`, so a
+        hidden row never inflates the count or breaks pagination.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [investigations, total]
+          properties:
+            investigations: { type: array, items: { $ref: '#/components/schemas/InvestigationListItem' } }
+            total: { type: integer }
+
+    InvestigationResponse:
+      type: object
+      description: |
+        One investigation with its conversation. The payload is the stored row (snake_case)
+        plus a parsed `messages` array.
+
+        **History can be withheld without failing the read.** When the caller's CURRENT access
+        to the linked report is only PREVIEW, `messages` comes back EMPTY with
+        `history_unavailable: true` and a `history_reason` — a 200, not an error. Absence of
+        those two keys means the history is complete.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [investigation]
+          properties:
+            investigation:
+              type: object
+              required: [id, status, messages]
+              properties:
+                id: { type: integer }
+                user_id: { type: integer }
+                title: { type: [string, "null"] }
+                status: { type: string, enum: [active, limit_reached, archived] }
+                message_count: { type: [integer, "null"] }
+                tool_calls_count: { type: [integer, "null"] }
+                tokens_used: { type: [integer, "null"] }
+                report_id: { type: [string, "null"] }
+                report_type: { type: [string, "null"] }
+                created_at: { type: integer }
+                updated_at: { type: integer }
+                messages:
+                  type: array
+                  description: |
+                    The stored conversation, parsed from JSON (`[]` when absent). Message
+                    objects are the agent transcript as written and are deliberately not
+                    constrained here.
+                  items:
+                    type: object
+                    additionalProperties: true
+                history_unavailable:
+                  type: boolean
+                  description: Present and `true` only when history was withheld; otherwise absent.
+                history_reason:
+                  type: string
+                  description: Present only alongside `history_unavailable`.
+
+    InvestigationArchivedResponse:
+      type: object
+      description: |
+        `DELETE` ARCHIVES the investigation (`status = 'archived'`); it does not delete the
+        row. Archiving one that is already archived answers 404, so this is not idempotent.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [archived]
+          properties:
+            archived: { type: boolean, enum: [true] }
+
+    WatchlistItem:
+      type: object
+      description: |
+        A D1 `watchlist` row returned VERBATIM, so keys are snake_case and the booleans are
+        stored integers (`0`/`1`), not JSON booleans.
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        address: { type: string }
+        network: { type: string }
+        label: { type: [string, "null"] }
+        notify_email: { type: [integer, "null"] }
+        notify_telegram: { type: [integer, "null"] }
+        notify_webhook: { type: [integer, "null"] }
+        threshold_value: { type: [number, "null"] }
+        threshold_max: { type: [number, "null"] }
+        track_all: { type: [integer, "null"] }
+        last_checked_at: { type: [integer, "null"] }
+        last_tx_hash: { type: [string, "null"] }
+        last_balance: { type: [string, "null"] }
+        is_contract: { type: [integer, "null"] }
+        deployer_address: { type: [string, "null"] }
+        is_active: { type: [integer, "null"] }
+        created_at: { type: integer }
+        updated_at: { type: [integer, "null"] }
+
+    WatchlistListResponse:
+      type: object
+      description: Only active entries are listed; a removed entry is soft-deleted and disappears.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [items, total, page, limit]
+          properties:
+            items:
+              type: array
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/WatchlistItem'
+                  - type: object
+                    properties:
+                      alert_count:
+                        type: integer
+                        description: Alerts recorded for this entry. Present on the LIST only.
+            total: { type: integer }
+            page: { type: integer }
+            limit: { type: integer }
+
+    WatchlistItemResponse:
+      type: object
+      description: |
+        Returned by both `POST /api/watchlist` (201) and `PATCH /api/watchlist/{id}` (200).
+
+        `POST` is an UPSERT on `(account, address, network)`: posting an address you already
+        watch updates that entry and re-activates it if it had been removed, rather than
+        creating a second one or conflicting. It still answers `201`.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [item]
+          properties:
+            item: { $ref: '#/components/schemas/WatchlistItem' }
+
+    WatchlistAlert:
+      type: object
+      description: A D1 `watchlist_alerts` row returned VERBATIM (snake_case; integer flags).
+      properties:
+        id: { type: integer }
+        watchlist_id: { type: integer }
+        user_id: { type: integer }
+        alert_type:
+          type: string
+          enum: [new_tx, large_tx, balance_change, risk_change, new_counterparty]
+        tx_hash: { type: [string, "null"] }
+        details:
+          type: [string, "null"]
+          description: Stored as a JSON STRING, not an object — parse it client-side.
+        notified_email: { type: [integer, "null"] }
+        notified_telegram: { type: [integer, "null"] }
+        notified_webhook: { type: [integer, "null"] }
+        created_at: { type: integer }
+
+    WatchlistAlertListResponse:
+      type: object
+      description: Alerts for one watchlist entry. An unknown or unowned `{id}` answers 404.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [alerts, total, page, limit]
+          properties:
+            alerts: { type: array, items: { $ref: '#/components/schemas/WatchlistAlert' } }
+            total: { type: integer }
+            page: { type: integer }
+            limit: { type: integer }
+
+    AlertListResponse:
+      type: object
+      description: |
+        Alerts across the whole account. Each row is a `watchlist_alerts` row joined with its
+        watchlist entry, so it additionally carries that entry's `address`, `network` and
+        `label`. Note the default page size here is 50, not the 20 used by the per-entry list.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [alerts, total, page, limit]
+          properties:
+            alerts:
+              type: array
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/WatchlistAlert'
+                  - type: object
+                    properties:
+                      address: { type: string }
+                      network: { type: string }
+                      label: { type: [string, "null"] }
+            total: { type: integer }
+            page: { type: integer }
+            limit: { type: integer }
+
+    CustomLabelRow:
+      type: object
+      description: |
+        The STABLE PUBLIC PROJECTION of a custom label row — these nine fields and no others,
+        in snake_case, with unix-second integer timestamps.
+
+        It is not a raw dump of the underlying row. Every path that returns a label (list, create,
+        update) selects this fixed column set explicitly, so a column added to the underlying
+        table does NOT appear here: a new field is a contract change, published with its schema.
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        address: { type: string }
+        network: { type: string }
+        label: { type: string }
+        category: { type: string }
+        notes: { type: [string, "null"] }
+        created_at: { type: integer }
+        updated_at: { type: [integer, "null"] }
+
+    LabelItemResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [item]
+          properties:
+            item: { $ref: '#/components/schemas/CustomLabelRow' }
+
+    NotificationSettingsRowResponse:
+      type: object
+      description: |
+        `PATCH` answers with the STORED ROW wrapped in `settings` — a different shape from
+        `GET /api/notifications/settings`, which answers a flat camelCase projection. The two
+        are not interchangeable, and that asymmetry is recorded here rather than normalised.
+
+        **`webhook_secret` is NOT part of this contract.** It is a value YOU supply in the
+        request body; nothing in the API is specified to return it, `GET
+        /api/notifications/settings` does not, and no client should read it back from here.
+        Treat your own copy as the authority.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [settings]
+          properties:
+            settings:
+              type: object
+              additionalProperties: true
+              properties:
+                id: { type: integer }
+                user_id: { type: integer }
+                telegram_chat_id: { type: [string, "null"] }
+                telegram_enabled: { type: [integer, "null"] }
+                webhook_url: { type: [string, "null"] }
+                webhook_enabled: { type: [integer, "null"] }
+                email_enabled: { type: [integer, "null"] }
+                daily_digest: { type: [integer, "null"] }
+                created_at: { type: integer }
+                updated_at: { type: [integer, "null"] }
+
+    TelegramLinkResponse:
+      type: object
+      description: |
+        A single-use deep link that binds the Telegram account which opens it to this account.
+        The `token` expires after 10 minutes. Treat both values as secrets: anyone who opens
+        the link binds THEIR Telegram account to YOUR OnChainRisk account.
+
+        Answers `503 TELEGRAM_BOT_USERNAME_REQUIRED` when the environment has no bot
+        configured.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [link, token]
+          properties:
+            link: { type: string, format: uri }
+            token: { type: string }
+
+    AnalysisResponse:
+      type: object
+      description: |
+        The REAL HTTP body of POST /api/v1/check on the synchronous path.
+
+        The HTTP 200 response for this endpoint uses the standard `{ success, data }` envelope —
+        the handler serializes exactly `{ success: true, data: <result> }`. The 200 used to
+        declare bare `AnalysisResult`, which described the INNER payload rather than the body on
+        the wire, so a generated client looked for `riskScore` at the top level and found
+        `success` there instead.
+
+        The async path returns 202 with `AsyncQueuedResponse` — the same envelope, a different
+        payload.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/AnalysisResult' }
+
     AsyncQueuedResponse:
       type: object
       description: |
         202 response from POST /api/v1/check when the analysis takes the async
         path (heavy address). The reportId is stable across the in-flight window —
         a deduplicated retry returns the same id with `deduplicated: true`.
+
+        A FRESH acceptance always reports `queued` and omits `deduplicated`
+        entirely. A DEDUPLICATED retry reports the existing lifecycle's current
+        status, which is `queued` or `analyzing` — never a terminal status,
+        because a `complete` or `failed` report is not a dedupe candidate.
       required: [success, data]
       properties:
         success: { type: boolean, example: true }
@@ -2898,8 +4108,17 @@ components:
               description: Public id of the queued report. Use with /api/v1/check/status/{reportId}.
             status:
               type: string
-              enum: [queued]
-              description: Initial status — always `queued` at the 202 boundary.
+              enum: [queued, analyzing]
+              description: |
+                `queued` on a fresh acceptance — always, since a new lifecycle
+                is zero seconds old. On a deduplicated retry this is the
+                EXISTING lifecycle's current status, so it may be `analyzing`.
+
+                Terminal statuses never appear here: only an in-flight
+                lifecycle deduplicates, so `complete` and `failed` are
+                unreachable on this response. Read
+                `GET /api/v1/check/status/{reportId}` for the full
+                `ReportStatus` vocabulary.
             async:
               type: boolean
               enum: [true]
@@ -2907,10 +4126,78 @@ components:
             deduplicated:
               type: boolean
               description: |
-                True when this 202 returned the existing in-flight report's id
-                instead of creating a new one. Within a 30-minute window, repeat
-                POSTs for the same `(api-key, address, network)` are idempotent
-                and don't create new charges or queue jobs.
+                Present and `true` ONLY when this 202 returned an existing
+                in-flight lifecycle's id instead of creating a new one. Absent
+                entirely on a fresh acceptance — do not treat `false` and
+                missing as different.
+
+                Within a 30-minute window, a repeat POST for the same
+                `(owning account, canonical address, network)` is idempotent
+                and creates no new charge and no new queue job — provided the
+                existing lifecycle is still in flight. Ownership is the
+                ACCOUNT, so another key on the same account deduplicates
+                against it too.
+
+    ScanStatusResponse:
+      type: object
+      description: |
+        The REAL HTTP body of GET /api/v1/check/status/{reportId}.
+
+        The HTTP 200 response for this endpoint uses the standard `{ success, data }` envelope —
+        the handler returns `success(scanStatusFrom(...))`, and `utils/response.js::success()`
+        serializes exactly this shape. The 200 used to declare bare `ScanStatus`, which described
+        the INNER payload rather than the body on the wire, and the published examples (which did
+        carry the envelope) contradicted it. A generated client built against the old schema
+        would have looked for `status` at the top level and found `success` there instead.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/ScanStatus' }
+
+    ReportResponse:
+      type: object
+      description: |
+        The REAL HTTP body of GET /api/reports/{id} — the same `{ success, data }` envelope.
+
+        `data` is EITHER a complete `AnalysisResult` OR the lightweight body returned for every
+        non-complete status (`failed` included).
+
+        **anyOf, not oneOf, and that is deliberate.** The two branches are not distinguishable by
+        schema: `AnalysisResult` has no required properties, and the lightweight body's six
+        properties all exist on it as optionals — so a lightweight payload satisfies BOTH branches
+        and a strict `oneOf` validator rejects a response the API genuinely sends. The route has
+        no discriminator field to add without changing paid runtime, so the honest composition is
+        `anyOf`.
+
+        **Branch on whether `data.status` is PRESENT**, not on its value:
+
+        * `data.status` **absent** → the complete `AnalysisResult`. A complete report carries
+          no `status` field at all.
+        * `data.status` **present and not `complete`** → the lightweight body (`queued`,
+          `analyzing` or `failed`).
+
+        Testing `data.status === 'complete'` never matches, because the complete branch omits
+        the field entirely. The server's own `if (row.status && row.status !== 'complete')`
+        tests the STORED ROW, not the response payload, and must not be transcribed as a
+        client rule.
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          anyOf:
+            - $ref: '#/components/schemas/AnalysisResult'
+            - type: object
+              description: |
+                Non-complete report — analysis not written. Returned for `queued`, `analyzing`
+                AND `failed`; on `failed`, `errorMessage` is populated.
+              required: [reportId, status]
+              properties:
+                reportId: { type: string }
+                address: { type: string }
+                network: { type: string }
+                status: { $ref: '#/components/schemas/ReportStatus' }
+                errorMessage: { type: [string, 'null'] }
+                createdAt: { type: string, format: date-time }
 
     ScanStatus:
       type: object
@@ -2924,29 +4211,25 @@ components:
         status:
           $ref: '#/components/schemas/ReportStatus'
         phase:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: |
             Free-form phase label set by the consumer worker while
             `status='analyzing'` (e.g. `fetching_transactions`). Cleared
             (`null`) on completion. Treat as observability hint, not API.
         errorMessage:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: Populated when `status='failed'`.
         riskScore:
-          type: integer
-          nullable: true
+          type: [integer, 'null']
           minimum: 0
           maximum: 100
           description: Set when `status='complete'`. `null` otherwise.
         riskLevel:
-          type: string
-          nullable: true
-          enum: [critical, high, medium, low]
-        queuedAt:    { type: string, format: date-time, nullable: true }
-        startedAt:   { type: string, format: date-time, nullable: true }
-        finishedAt:  { type: string, format: date-time, nullable: true }
+          type: [string, 'null']
+          enum: [critical, high, medium, low, null]
+        queuedAt:    { type: [string, 'null'], format: date-time }
+        startedAt:   { type: [string, 'null'], format: date-time }
+        finishedAt:  { type: [string, 'null'], format: date-time }
 
     DestinationEntityRecord:
       type: object
@@ -2957,8 +4240,7 @@ components:
       properties:
         displayLabel: { type: string }
         entityName:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: Structured entity name when available; otherwise null.
         entityType:
           type: string
@@ -2985,8 +4267,7 @@ components:
         asset: { type: string }
         assetType: { type: string, enum: [native, token] }
         assetAddress:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: Token contract/mint; null for native assets.
         assetDecimals: { type: integer }
         labelSource: { type: string }
@@ -2994,17 +4275,16 @@ components:
           type: string
           enum: [provenance_backed, manual_known_address, user_custom]
         confidenceLevel:
-          type: string
-          nullable: true
+          type: [string, 'null']
           enum: [high, medium, low, null]
-        attributionEvidenceType: { type: string, nullable: true }
+        attributionEvidenceType: { type: [string, 'null'] }
     DestinationEntityAssetTotal:
       type: object
       description: Per-asset total; native and token base units are never summed.
       properties:
         asset: { type: string }
         assetType: { type: string, enum: [native, token] }
-        assetAddress: { type: string, nullable: true }
+        assetAddress: { type: [string, 'null'] }
         assetDecimals: { type: integer }
         amountRaw:
           type: string
@@ -3020,8 +4300,7 @@ components:
         complete: { type: boolean }
         transactionHistoryComplete: { type: boolean }
         tokenHistoryComplete:
-          type: boolean
-          nullable: true
+          type: [boolean, 'null']
           description: true, false, or null when token transfers are not applicable.
         transactionCoverage:
           type: string
@@ -3030,10 +4309,10 @@ components:
         tokenTransferSupported: { type: boolean }
         tokenFlowIncomplete: { type: boolean }
         analyzedTransactions: { type: integer }
-        totalTransactions: { type: integer, nullable: true }
-        completenessPct: { type: number, nullable: true }
-        partialReason: { type: string, nullable: true }
-        tokenPartialReason: { type: string, nullable: true }
+        totalTransactions: { type: [integer, 'null'] }
+        completenessPct: { type: [number, 'null'] }
+        partialReason: { type: [string, 'null'] }
+        tokenPartialReason: { type: [string, 'null'] }
         windowDescription: { type: string }
         note: { type: string }
     DestinationEntitySummary:
@@ -3052,8 +4331,7 @@ components:
             - $ref: '#/components/schemas/DestinationEntityHistoryDisclosure'
             - type: 'null'
     ContractAnalysis:
-      type: object
-      nullable: true
+      type: [object, 'null']
       description: |
         Contract bytecode analysis. Returned for deployed contracts (`addressInfo.type` =
         `contract` or `smart_contract`); `null` for EOAs and addresses with no bytecode.
@@ -3063,14 +4341,13 @@ components:
         returns a minimal object with bytecode metadata only; backend normalizes the
         shape so consumers can rely on these fields existing without runtime guards.
       properties:
-        contractName: { type: string, nullable: true, example: "Router" }
+        contractName: { type: [string, 'null'], example: "Router" }
         bytecodeSize:
-          type: integer
-          nullable: true
+          type: [integer, 'null']
           description: "Bytecode length in bytes. `null` when unknown — clients should render `Unknown`, never `0`."
           example: 6177
-        compilerVersion: { type: string, nullable: true, example: "v0.8.16+commit.07a7930e" }
-        deployer: { type: string, nullable: true, example: "0xabc..." }
+        compilerVersion: { type: [string, 'null'], example: "v0.8.16+commit.07a7930e" }
+        deployer: { type: [string, 'null'], example: "0xabc..." }
         isVerified: { type: boolean, example: true }
         hasSelfdestruct: { type: boolean }
         hasDelegatecall: { type: boolean }
@@ -3085,31 +4362,28 @@ components:
           description: "Decoded function signatures recognized in bytecode. Empty array when none."
 
     ContractInfo:
-      type: object
-      nullable: true
+      type: [object, 'null']
       description: "Deployment + proxy metadata. Distinct from `contractAnalysis` (bytecode analysis)."
       properties:
-        deployer: { type: string, nullable: true }
-        creationTx: { type: string, nullable: true }
-        creationBlock: { type: integer, nullable: true }
+        deployer: { type: [string, 'null'] }
+        creationTx: { type: [string, 'null'] }
+        creationBlock: { type: [integer, 'null'] }
         isProxy:
           type: boolean
           description: "True when the contract is a proxy (EIP-1967 / minimal proxy / etc.) verified against on-chain implementation slot. Inferred-only fallbacks are NOT reflected here."
-        implementationAddress: { type: string, nullable: true, description: "Set when `isProxy` is true and the implementation is resolvable." }
-        contractName: { type: string, nullable: true }
+        implementationAddress: { type: [string, 'null'], description: "Set when `isProxy` is true and the implementation is resolvable." }
+        contractName: { type: [string, 'null'] }
 
     DataCompleteness:
-      type: object
-      nullable: true
+      type: [object, 'null']
       description: "Transaction fetch completeness signals. Drives partial-data UX and `heavy_contract_overview` marker."
       properties:
         reportedTxCount: { type: integer, description: "Total tx count as reported by chain stats / explorer." }
         fetchedTxCount: { type: integer, description: "Number of transactions actually parsed end-to-end." }
-        completenessPct: { type: number, nullable: true, description: "100 × fetched / reported, rounded; `null` if reported is 0." }
+        completenessPct: { type: [number, 'null'], description: "100 × fetched / reported, rounded; `null` if reported is 0." }
         partialReason:
-          type: string
-          nullable: true
-          enum: [timeout, limit_cap, limit_cap_assumed, api_error, btc_tx_count_exceeds_full_fetch_limit, ltc_tx_count_exceeds_full_fetch_limit, heavy_contract_overview]
+          type: [string, 'null']
+          enum: [timeout, limit_cap, limit_cap_assumed, api_error, btc_tx_count_exceeds_full_fetch_limit, ltc_tx_count_exceeds_full_fetch_limit, heavy_contract_overview, null]
           description: |
             Why the data is partial. `heavy_contract_overview` is set automatically when the
             address is a deployed contract with `txCount >= 50000` AND the analyzer returned
@@ -3383,8 +4657,7 @@ components:
             * `counterparty_interaction` — the counterparty's label
               (Phase 2).
         detail:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: |
             Optional free-form detail string for any kind. Currently
             used by `pattern_predicate` for the `high_flag_density`
@@ -3414,8 +4687,7 @@ components:
             evidence > 0" holds without a Modal redeploy. Omitted on
             other kinds.
         flagText:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: |
             For `pattern_predicate` rows: the raw `flags` entry that
             triggered the predicate. Null for synthesized meta-
@@ -3432,14 +4704,12 @@ components:
           description: |
             RESERVED for `counterparty_interaction` (Phase 2).
         lastInteractionAt:
-          type: string
+          type: [string, 'null']
           format: date-time
-          nullable: true
           description: |
             RESERVED for `counterparty_interaction` (Phase 2).
         valueUsd:
-          type: number
-          nullable: true
+          type: [number, 'null']
           description: |
             RESERVED for `counterparty_interaction` (Phase 2).
 
@@ -3475,39 +4745,36 @@ components:
           type: string
           enum: [ok, unable_to_verify, not_supported, no_data]
         reason:
-          type: string
-          nullable: true
+          type: [string, 'null']
           enum:
             - provider_rate_limited
             - provider_error
             - analyzer_error
             - network_not_supported
             - no_data
+            - null
         isHoneypot:
-          type: boolean
-          nullable: true
+          type: [boolean, 'null']
           description: |
             True/false ONLY when `status="ok"`. Null for all non-ok statuses.
             Null means "unknown" — NOT "not a honeypot".
-        buyTax: { type: number, nullable: true }
-        sellTax: { type: number, nullable: true }
-        buySuccess: { type: boolean, nullable: true }
-        sellSuccess: { type: boolean, nullable: true }
-        transferPausable: { type: boolean, nullable: true }
-        hasBlacklist: { type: boolean, nullable: true }
-        hasMaxTx: { type: boolean, nullable: true }
-        hasCooldown: { type: boolean, nullable: true }
-        liquidityLocked: { type: boolean, nullable: true }
-        liquidityAmount: { type: number, nullable: true }
-        pairAddress: { type: string, nullable: true }
-        dexName: { type: string, nullable: true }
+        buyTax: { type: [number, 'null'] }
+        sellTax: { type: [number, 'null'] }
+        buySuccess: { type: [boolean, 'null'] }
+        sellSuccess: { type: [boolean, 'null'] }
+        transferPausable: { type: [boolean, 'null'] }
+        hasBlacklist: { type: [boolean, 'null'] }
+        hasMaxTx: { type: [boolean, 'null'] }
+        hasCooldown: { type: [boolean, 'null'] }
+        liquidityLocked: { type: [boolean, 'null'] }
+        liquidityAmount: { type: [number, 'null'] }
+        pairAddress: { type: [string, 'null'] }
+        dexName: { type: [string, 'null'] }
         flags:
-          type: array
+          type: [array, 'null']
           items: { type: string }
-          nullable: true
         riskLevel:
-          type: string
-          nullable: true
+          type: [string, 'null']
 
     FlagDetail:
       type: object
@@ -3572,7 +4839,7 @@ components:
         id: { type: integer, example: 42 }
         reportId: { type: string, description: "Report public_id" }
         name: { type: string, maxLength: 100, example: "After expanding counterparties" }
-        description: { type: string, nullable: true, maxLength: 500 }
+        description: { type: [string, 'null'], maxLength: 500 }
         nodeCount: { type: integer, description: "Computed server-side from graphData.nodes" }
         edgeCount: { type: integer, description: "Computed server-side from graphData.edges" }
         createdAt: { type: integer, description: "Unix timestamp (seconds)" }

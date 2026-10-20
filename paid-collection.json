@@ -1991,22 +1991,22 @@
                 "api",
                 "labels"
               ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.response.code === 201) {",
-                  "  const d = pm.response.json().data;",
-                  "  if (d && d.id) pm.collectionVariables.set('sample_label_id', String(d.id));",
-                  "}"
-                ]
+            },
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "if (pm.response.code === 201) {",
+                    "  const d = pm.response.json().data;",
+                    "  if (d && d.id) pm.collectionVariables.set('sample_label_id', String(d.id));",
+                    "}"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "PATCH /api/labels/{id}",
@@ -2125,37 +2125,6 @@
                 "api",
                 "graph",
                 "expand"
-              ]
-            }
-          }
-        },
-        {
-          "name": "POST /api/graph/csv-import — import fund flow CSV",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{paid_api_key}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"reportId\": \"{{sample_report_id}}\",\n  \"csv\": \"from,to,value\\n0x...,0x...,100\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/graph/csv-import",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "graph",
-                "csv-import"
               ]
             }
           }

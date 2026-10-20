@@ -60,6 +60,8 @@ curl -X POST https://api.onchainrisk.io/api/v1/check \
 
 **Async path:** for high-volume EVM addresses the API may return HTTP **202** with a `reportId`. Poll `GET /api/v1/check/status/{reportId}` until `status: "complete"` or `"failed"` — this status endpoint is lifecycle-only. Once complete, fetch the full report with `GET /api/reports/{reportId}` (see § Reports below). Light addresses return synchronously.
 
+> **Sandbox:** this whole flow is now exercisable on an `ocr_test_*` key, which it was not before #735 Slice 6 — the two endpoints above used to answer `403` to a sandbox key even though this page told you to poll them. Two documented fixture addresses take the async path (`0x0000000000000000000000000000000000735a01` reaches `complete`, `0x0000000000000000000000000000000000735f01` reaches `failed`); every other sandbox address stays synchronous, and there is no request flag. The sandbox lifecycle is deterministic and simulated — `queued` for 2s, `analyzing` until 6s, then terminal, readable for an hour — with no queue, no provider call and no billing. The contract is identical to paid, so the polling loop you write here is the one you keep after switching the credential.
+
 ---
 
 ## 3. Expand neighbours
