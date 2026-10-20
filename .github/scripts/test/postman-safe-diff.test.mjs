@@ -352,17 +352,45 @@ describe('SAFE_DIFF_NOOP_SILENT and the printing rule', () => {
 });
 
 describe('SAFE_DIFF_DOES_NOT_CHANGE_HASH', () => {
-  // The paid value moved when comparison normalization began canonicalizing Postman's
-  // optional-field serialization: three authored `response: []` arrays are now normalized away.
-  // The collection CONTENT did not change — only what the comparator considers comparable.
+  /**
+   * REVIEWED CANONICAL HASHES — fail-closed detection of an UNREVIEWED collection change.
+   *
+   * Both values moved because the published API surface changed: the paid collection went from 46
+   * to 45 requests and the sandbox collection from 21 to 44, so every request item the comparator
+   * hashes moved with them. That is an INTENTIONAL artifact change, mirrored from the serving
+   * repository, and these hashes were re-derived from the committed collections rather than copied
+   * out of a CI failure log — the independent derivation is recorded in the repair PR.
+   *
+   * The earlier paid value (9ccc9a57…) belonged to the 46-request generation, and the earlier
+   * sandbox value (b1a89ffc…) to the 21-request one. Neither is reachable from the current files.
+   *
+   * These must stay HAND-REVIEWED. There is deliberately no updater that accepts whatever hash
+   * appears: the whole point is that a collection change nobody looked at fails here.
+   */
   test('both real collections hash to their reviewed canonical values', () => {
     const expected = {
-      'paid-collection.json': '9ccc9a578996ae5f547ecbbee564f449dcf43e50b64e433071da0c18b5f4cf93',
-      'onchainrisk_sandbox_api_collection.json': 'b1a89ffcbca4c7df72dbbfc291b8bbc7f92f22e359455aa81412dc673c48799f',
+      'paid-collection.json': 'b5d54c4ff488bb60ae135563a3b609f90cc98463706b4af2c20905729ef3f283',
+      'onchainrisk_sandbox_api_collection.json': '379e07985aa0e91a2fe9af30d31d63c20e64e3deae252d1564634896a870d303',
     };
     for (const [file, hash] of Object.entries(expected)) {
       assert.equal(contentHash(readLocal(file)), hash, `${file} hash must be byte-for-byte unchanged`);
     }
+  });
+
+  test('the reviewed hashes correspond to the reviewed request COUNTS', () => {
+    // A hash alone is opaque: a reviewer cannot tell 45 requests from 46 by looking at it. Pinning
+    // the counts beside the hashes makes the evidence legible, and makes a future mismatch say
+    // WHICH thing moved. Counted here with a local walker rather than a shared helper, so a stale
+    // helper cannot agree with a stale fixture.
+    const leaves = (node, out = []) => {
+      for (const n of node.item ?? []) {
+        if (Array.isArray(n.item)) leaves(n, out);
+        else out.push(n);
+      }
+      return out;
+    };
+    assert.equal(leaves(readLocal('paid-collection.json')).length, 45, 'paid requests');
+    assert.equal(leaves(readLocal('onchainrisk_sandbox_api_collection.json')).length, 44, 'sandbox requests');
   });
 
   test('computing a diff does not mutate either input', () => {

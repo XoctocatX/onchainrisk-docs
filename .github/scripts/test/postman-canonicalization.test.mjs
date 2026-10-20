@@ -9,8 +9,11 @@
  *   - `response: []` on each request with no saved examples, where a hand-authored collection
  *     simply omits the optional field.
  *
- * On the real paid collection that is exactly 39 + 19 = 58 paths, which is the count the
- * authoritative read-only verify reported. Both are normalized for COMPARISON only. The six
+ * When that run stopped, the paid collection had 39 requests with no authored examples and 19
+ * saved examples, so the authoritative read-only verify reported exactly 39 + 19 = 58 normalized
+ * paths. That 58 is a record of THAT incident, not a property of the collection: the published
+ * paid surface has since changed, and the CURRENT reviewed shape is pinned in
+ * POST_WRITE_SHAPE_REGRESSION below. Both fields are normalized for COMPARISON only. The six
  * invariants below are what keeps that narrow.
  */
 
@@ -409,18 +412,71 @@ describe('POST_WRITE_SHAPE_REGRESSION', () => {
     }
   });
 
-  test('the paid collection reproduces the 58 serialization paths the stopped run reported', () => {
-    // 39 requests with no authored examples + 19 saved examples = the 58 removed paths in the
-    // authoritative read-only verify. Pinning the arithmetic keeps the fixture honest: if the
-    // collection changes shape, this number must be re-derived rather than assumed.
+  test('the paid collection has the CURRENT reviewed serialization shape', () => {
+    // WHAT THIS PINS, and why the number here is not the 58 in the file header.
+    //
+    // The 58 belonged to one incident: when the first publish stopped, the paid collection had
+    // 39 absent `response` keys + 19 saved examples. The published paid surface has changed since
+    // (45 requests today, not 46), so re-deriving 58 from the live file would be impossible and
+    // asserting it anyway would be a fixture that lies. This test is therefore about the CURRENT
+    // reviewed shape, and the arithmetic is spelled out so a future change has to be re-derived
+    // and re-reviewed rather than silently absorbed:
+    //
+    //   45 requests · 19 saved examples · 38 with `response` ABSENT · 3 authored `response: []`
+    //   => 41 requests carry no examples (38 + 3)
+    //   => 38 + 19 = 57 paths the comparator normalizes
+    //
+    // Independently derived from the committed collection, not copied from a CI log.
     const local = readLocal(COLLECTIONS.find((c) => c.role === 'paid').file);
     const rs = requests(local);
+    const absent = rs.filter((r) => !('response' in r));
+    const emptyArrays = rs.filter((r) => Array.isArray(r.response) && r.response.length === 0);
     const noExamples = rs.filter((r) => !Array.isArray(r.response) || r.response.length === 0);
     const examples = rs.reduce((n, r) => n + (r.response?.length ?? 0), 0);
-    assert.equal(rs.length, 46);
+    assert.equal(rs.length, 45, 'paid requests');
+    assert.equal(examples, 19, 'saved examples');
+    assert.equal(absent.length, 38, 'requests with the response key absent');
+    assert.equal(emptyArrays.length, 3, 'requests with an authored empty response array');
+    assert.equal(noExamples.length, 41, '38 absent + 3 authored empty arrays');
+    assert.equal(absent.length + examples, 57, 'normalized serialization paths');
+    // The two ways of counting "no examples" must agree — if they ever diverge, one of the two
+    // categories above was mis-measured and the totals cannot be trusted.
+    assert.equal(absent.length + emptyArrays.length, noExamples.length);
+  });
+
+  test('the HISTORICAL 58-path incident shape is still what the comparator normalizes', () => {
+    // Option B of the repair, kept alongside option A: the incident is preserved as a FIXTURE,
+    // decoupled from the live collection, so the historical claim in this file's header remains
+    // demonstrable after the published surface moves again. It builds the 1-publish-era shape —
+    // 39 requests with no authored examples plus 19 saved examples — and proves the comparator
+    // still normalizes exactly those 58 paths to a matching hash.
+    const local = { ...canonical(), item: [] };
+    for (let i = 0; i < 39; i += 1) {
+      local.item.push({ name: `GET /no-example/${i}`, request: { method: 'GET', url: { raw: `{{base_url}}/x/${i}` } } });
+    }
+    for (let i = 0; i < 19; i += 1) {
+      local.item.push({
+        name: `POST /with-example/${i}`,
+        request: { method: 'POST', url: { raw: `{{base_url}}/y/${i}` } },
+        response: [{ name: '200', code: 200, status: 'OK', body: '{}' }],
+      });
+    }
+    const rs = requests(local);
+    const absent = rs.filter((r) => !('response' in r)).length;
+    const examples = rs.reduce((n, r) => n + (r.response?.length ?? 0), 0);
+    assert.equal(absent, 39);
     assert.equal(examples, 19);
-    assert.equal(rs.filter((r) => !('response' in r)).length, 39);
-    assert.equal(noExamples.length, 42, '39 absent + 3 authored empty arrays');
-    assert.equal(39 + examples, 58);
+    assert.equal(absent + examples, 58, 'the shape the stopped run reported');
+
+    // Now the part that matters: Postman's serializer adds `response: []` to each of the 39 and
+    // `responseTime` to each of the 19, and the comparator must still hash-match.
+    const remote = clone(local);
+    for (const r of requests(remote)) {
+      if (!('response' in r)) r.response = [];
+      else for (const ex of r.response) ex.responseTime = 41;
+    }
+    assert.equal(contentHash(local), contentHash(remote), 'all 58 paths must normalize away');
+    const d = safeDiff(local, remote);
+    assert.deepEqual([d.added.length, d.removed.length, d.changed.length], [0, 0, 0]);
   });
 });
