@@ -70,10 +70,10 @@ info:
       fixture input today.
 
     SCOPE. `execution_mode` and `fixture_fields` belong to the
-    `POST /api/v1/check` marker only. `POST /api/v1/sandbox/graph/expand`
-    returns its own `_sandbox` block, with its own keys (`partial`, `limits`,
-    and its own `gated_fields`) and NEITHER of those two; it has no documented
-    fixture input. `GET /api/v1/usage` and every error response carry no
+    `POST /api/v1/check` marker only. `POST /api/graph/expand` returns its own
+    `_sandbox` block, with its own keys (`partial`, `limits`, and its own
+    `gated_fields`) and NEITHER of those two; it has no documented fixture
+    input. `GET /api/v1/usage` and every error response carry no
     `_sandbox` marker of this shape at all. Read each operation's own schema.
 
     Read `_sandbox.execution_mode` before reading anything below. The
@@ -507,110 +507,6 @@ paths:
           # typing one only on the sandbox side would make a sandbox-generated client model a
           # payload branch for a response paid may send bodiless.
           description: Analysis temporarily unavailable
-
-  /api/v1/sandbox/graph/expand:
-    post:
-      operationId: sandboxGraphExpand
-      tags: [Graph]
-      summary: Sandbox graph preview (depth=1, last 7 days, capped)
-      description: |
-        Sandbox graph preview is for **integration testing**. It is limited
-        to depth 1, recent activity, and capped nodes/edges. Upgrade for
-        full historical graph expansion via paid `/api/graph/expand`.
-
-        Returns a node/edge graph in the same broad shape as paid
-        `/api/graph/expand` (aggregated counterparty edges with
-        `from`/`to`/`value`/`valueWei`/`txCount`/`firstTx`/`lastTx`/
-        `tokenBreakdown`) so a sandbox client can be re-pointed at paid
-        without rewriting response handling.
-
-        ### Sandbox limits
-        - `depth`: max 1 (silently clamped; reported in `_sandbox.truncated_fields.depth`)
-        - `nodes`: max 20
-        - `edges`: max 30
-        - History window: last 7 days only
-        - Tx fetch cap: 100 per request
-        - No clusters, no entity expansion, no cross-chain graph, no AI
-        - **No report persistence**, **no usage row**, **no credit charge**
-
-        ### Supported networks
-        EVM family — `eth`, `arbitrum`, `optimism`, `base`, `polygon`,
-        `avalanche`, `zksync`, `scroll`, `celo`, `cronos`, `moonbeam`,
-        plus `bsc` and `tron`. **13 networks total** in current
-        production. Other networks (sol, btc, ltc, ton, cosmos, cardano,
-        xrp, plus `linea`, `fantom`, `polygon_zkevm`) return **422**
-        with `details.errorCode = "NETWORK_NOT_SUPPORTED_IN_SANDBOX"` —
-        no silent fallback to a paid traversal.
-
-        > `linea`, `fantom`, `polygon_zkevm` were removed from the
-        > supported set in audit #46 (2026-05-04) because the upstream
-        > analyzer returns 503 for these chains. They will return when
-        > the underlying provider config is fixed.
-
-        ### Auth
-        API key only (sandbox `ocr_test_*` or paid `ocr_live_*`). JWT/session
-        auth is rejected with 401 `API_KEY_REQUIRED`. Paid keys are allowed
-        so that paid customers can integrate-test against the sandbox shape;
-        the response is always sandbox-scoped regardless of key type.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [address, network]
-              properties:
-                address:
-                  type: string
-                  example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
-                network:
-                  type: string
-                  enum:
-                    - eth
-                    - arbitrum
-                    - optimism
-                    - base
-                    - polygon
-                    - avalanche
-                    - zksync
-                    - scroll
-                    - celo
-                    - cronos
-                    - moonbeam
-                    - bsc
-                    - tron
-                  example: "eth"
-                depth:
-                  type: integer
-                  minimum: 1
-                  maximum: 1
-                  default: 1
-                  description: |
-                    Depth is silently clamped to 1. Higher values are
-                    reported back via `_sandbox.truncated_fields.depth`.
-      responses:
-        '200':
-          description: Sandbox graph preview
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SandboxGraphResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '422':
-          $ref: '#/components/responses/ValidationFailed'
-        '429':
-          $ref: '#/components/responses/RateLimited'
-        '503':
-          description: Sandbox graph preview temporarily unavailable
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success: { type: boolean, example: false }
-                  error: { type: string, example: "Sandbox graph preview temporarily unavailable. Please try again later." }
-                  code: { type: string, example: "SANDBOX_GRAPH_UNAVAILABLE" }
 
   # Note: /api/analyze/estimate is NOT exposed on api.onchainrisk.io. It is an
   # internal preflight; direct external calls would 404. Intentionally
@@ -1322,7 +1218,13 @@ paths:
 
         Client-side idempotency is not currently supported. Repeated or concurrent successful requests may be billed separately.
 
-        Sandbox: FIXTURE. Returns a deterministic synthetic MEV result. THE ANALYTICAL VALUES ARE SYNTHETIC and are NOT an analysis of the block you supplied. `reportId` is stable and refers to no retrievable artifact — a sandbox compute call persists nothing.
+        Sandbox: FIXTURE analysis, with a real saved report. THE ANALYTICAL VALUES ARE SYNTHETIC and are NOT an analysis of the block you supplied — they are deterministic fixture data, which is why the execution mode is `fixture`.
+
+        A successful sandbox call DOES save a report, which is new since #748 Slice C: it creates an owner-scoped sandbox block report and returns its minted UUID as both `reportId` and `reportPublicId`. That id is retrievable — `GET /api/v1/block/reports/{id}` resolves it, and it also appears in `GET /api/v1/block/reports`. `_sandbox.reports_saved` is `true` here (it is `false` on every other sandbox compute operation), so a client can tell from the response alone whether the id it received resolves to anything.
+
+        LIFECYCLE. Re-analyzing the SAME network and block while the report is still live returns the SAME id with `cached: true`, and that repeat does NOT extend the report's life — a cache hit is not a mutation. A report expires 24 hours after it was created, or 24 hours after the last successful RENAME through `POST /api/v1/block/reports`, which is a mutation and does refresh the clock. Reading never refreshes it. Once a report expires, analyzing the subject again creates a fresh report with a NEW id and the old id answers 404. A different network or block number is a different report with its own id.
+
+        THE PAID IDEMPOTENCY NOTE ABOVE DOES NOT DESCRIBE SANDBOX. Paid states that client-side idempotency is unsupported and that repeated successful requests may be billed separately. On sandbox, repeated requests for the same live subject are deliberately correlated to the same report, and nothing is billed at all: no credits, no quota, no usage allowance, no billing state and no paid table.
       requestBody:
         required: true
         content:
@@ -1405,7 +1307,13 @@ paths:
 
         Client-side idempotency is not currently supported. Repeated or concurrent successful requests may be billed separately.
 
-        Sandbox: FIXTURE. Returns a deterministic synthetic multi-chain summary. THE ANALYTICAL VALUES ARE SYNTHETIC and are NOT an analysis of the address you supplied.
+        Sandbox: FIXTURE analysis, with a real saved report. THE ANALYTICAL VALUES ARE SYNTHETIC and are NOT an analysis of the address you supplied — they are deterministic fixture data, which is why the execution mode is `fixture`.
+
+        A successful sandbox call DOES save a report, which is new since #748 Slice D: it creates an owner-scoped sandbox multichain report and returns its minted UUID as both `reportId` and `reportPublicId`. That id is retrievable — `GET /api/v1/multichain/reports/{id}` resolves it, and it also appears in `GET /api/v1/multichain/reports`. `_sandbox.reports_saved` is `true` here, so a client can tell from the response alone that the id resolves to something.
+
+        TWO DIFFERENT LIFETIMES, mirroring paid. Re-scanning the SAME address within the 5-minute correlation window returns the SAME id with `cached: true`, and that repeat does NOT extend the report's life — a cache hit is not a mutation. Once the window lapses, scanning the same address again saves a SECOND report with a NEW id, and the first one remains retrievable and listed until its own 24-hour expiry. So one address may hold several live reports at once, exactly as it can on paid, where the scan cache lasts five minutes and the saved report does not expire at all. If the report a live pointer names has been removed, the scan answers 410 `REPORT_DELETED_RERUN_REQUIRED` rather than handing back a broken id.
+
+        THE PAID IDEMPOTENCY NOTE ABOVE DOES NOT DESCRIBE SANDBOX BILLING. Paid states that concurrent or repeated successful requests may be charged separately. On sandbox nothing is billed at all: no credits, no quota, no usage allowance, no billing state and no paid table. The correlation behaviour itself is the same — a repeat inside the window reuses the report, and two requests that race before the pointer exists may each save one.
       requestBody:
         required: true
         content:
@@ -1598,7 +1506,7 @@ paths:
         See `docs/integration/capability-matrix.md` for supported networks
         and plan rate limits.
 
-        Sandbox: BOUNDED. Served by the same cheap graph primitive as `POST /api/v1/sandbox/graph/expand`: depth 1, recent activity, capped nodes/edges, no billing. Unsupported networks answer 422 `NETWORK_NOT_SUPPORTED_IN_SANDBOX`.
+        Sandbox: BOUNDED. Real address and network, resolved by a cheap graph primitive: depth 1, recent activity only, capped nodes/edges, no paid traversal, no billing and no persistence. Unsupported networks answer 422 `NETWORK_NOT_SUPPORTED_IN_SANDBOX`. This is the ONE graph operation on both tiers — the credential selects the execution, not the path.
       requestBody:
         required: true
         content:
@@ -2041,172 +1949,109 @@ paths:
   # `upgrade_required: true` for most, and `unsupported` with `upgrade_required: false` for the
   # eleven whose policy row declares that reason. There is no uniform value to document here.
   # <<< GENERATED:m6-unavailable-paths — do not edit by hand; see scripts/generate-sandbox-contract.mjs >>>
-  /api/v1/webhook/deliveries:
-    get:
+  /api/notifications/telegram/connect:
+    post:
       tags:
-        - Account
-      summary: List webhook delivery audit (#41 Phase 1)
+        - Notifications
+      summary: Connect Telegram chat
       description: |-
-        Per-user webhook delivery audit, newest first. One row per
-        `event_id`; status reflects current state across retries.
+        Submit chat ID obtained by messaging the OnChainRisk bot with /start and copying the code it returns.
 
-        Use this to debug "did my webhook actually arrive" — the row
-        carries the result of every attempt path: 2xx delivered, 5xx/429
-        scheduled retry, 4xx terminal failure, 410 disabled, network/TLS
-        timeout retry.
-
-        Privacy: response carries `endpoint_host` (hostname) only. Full
-        webhook URL, secret, and request payload bytes are NEVER returned.
-        Configure your webhook URL via `PATCH /api/notifications/settings`.
-
-        Pagination: cursor-based on `id` (descending). When `next_cursor`
-        is non-null, pass it back as `?cursor=<value>` for the next page.
-
-        Authentication accepts paid API keys, sandbox API keys (read-only
-        introspection), and browser session JWT.
-
-        NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Webhook delivery history is an audit trail of real outbound deliveries. A sandbox key configures no webhook and the sandbox sends none, so there is no history to serve and an empty page would misrepresent a working integration.
-      parameters:
-        - in: query
-          name: status
-          schema:
-            type: string
-            enum:
-              - delivering
-              - delivered
-              - retry_scheduled
-              - failed
-              - disabled
-          description: Filter to a single delivery status.
-        - in: query
-          name: limit
-          schema:
-            type: integer
-            default: 20
-            minimum: 1
-            maximum: 100
-          description: Page size (default 20, max 100).
-        - in: query
-          name: cursor
-          schema:
-            type: string
-          description: Pagination cursor returned by the previous page (`next_cursor`).
+        NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Connecting Telegram is an external side effect against a real chat.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - chatId
+              properties:
+                chatId:
+                  type: string
       responses:
         "200":
-          description: Audit page
+          description: Telegram linked
           content:
             application/json:
               schema:
-                type: object
-                required:
-                  - success
-                  - data
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: object
-                    required:
-                      - deliveries
-                      - next_cursor
-                    properties:
-                      deliveries:
-                        type: array
-                        items:
-                          type: object
-                          required:
-                            - event_id
-                            - event_type
-                            - status
-                            - attempts_count
-                            - endpoint_host
-                            - created_at
-                            - updated_at
-                          properties:
-                            event_id:
-                              type: string
-                              example: wh_alert_12345_v1
-                            event_type:
-                              type: string
-                              enum:
-                                - watchlist_alert
-                                - test
-                              example: watchlist_alert
-                            alert_id:
-                              type:
-                                - integer
-                                - "null"
-                              description: Linked watchlist_alert id; null for test deliveries.
-                            endpoint_host:
-                              type: string
-                              description: Hostname of the configured receiver. Full URL never returned.
-                              example: receiver.example.com
-                            status:
-                              type: string
-                              enum:
-                                - delivering
-                                - delivered
-                                - retry_scheduled
-                                - failed
-                                - disabled
-                            attempts_count:
-                              type: integer
-                              minimum: 0
-                              example: 1
-                            next_retry_at:
-                              type:
-                                - string
-                                - "null"
-                              format: date-time
-                              description: ISO-8601 UTC. Non-null only when status=retry_scheduled.
-                            last_attempt_at:
-                              type:
-                                - string
-                                - "null"
-                              format: date-time
-                              description: ISO-8601 UTC of most recent delivery attempt.
-                            last_http_status:
-                              type:
-                                - integer
-                                - "null"
-                              description: HTTP status from last attempt; null on network-level failure.
-                              example: 200
-                            last_error_class:
-                              type:
-                                - string
-                                - "null"
-                              description: Error category (e.g. http_2xx, http_5xx, http_429, http_4xx_terminal, http_410_gone, AbortError, TypeError). Never carries response body.
-                              example: http_2xx
-                            delivered_at:
-                              type:
-                                - string
-                                - "null"
-                              format: date-time
-                              description: ISO-8601 UTC; set once on first 2xx, never cleared.
-                            created_at:
-                              type: string
-                              format: date-time
-                            updated_at:
-                              type: string
-                              format: date-time
-                      next_cursor:
-                        type:
-                          - string
-                          - "null"
-                        description: Pass to `?cursor=` for the next page; null when no more pages.
-        "401":
-          description: Authentication required or invalid API key
+                $ref: "#/components/schemas/TelegramLinkResponse"
+        "400":
+          description: Invalid chat ID
         "403":
           $ref: "#/components/responses/SandboxNotSupported"
-        "422":
-          description: Invalid query parameter (e.g. unsupported status)
+  /api/notifications/telegram/disconnect:
+    post:
+      tags:
+        - Notifications
+      summary: Disconnect Telegram
+      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Disconnecting Telegram mutates a real external binding."
+      responses:
+        "200":
+          description: Telegram unlinked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkFlagResponse"
+        "403":
+          $ref: "#/components/responses/SandboxNotSupported"
+  # <<< END GENERATED:m6-unavailable-paths >>>
+
+  # #748 Slice B — the NO_TIER public share operations, ADOPTED from the paid contract.
+  # They take no API key (the 64-hex share token is the credential), so they carry no sandbox
+  # execution mode and no sandbox 403. Generated, never hand-authored: see
+  # scripts/generate-sandbox-contract.mjs (NO_TIER_OPERATIONS / buildNoTierVertical).
+  # <<< GENERATED:no-tier-paths — do not edit by hand; see scripts/generate-sandbox-contract.mjs >>>
+  /api/share/{token}:
+    get:
+      tags:
+        - Sharing
+      summary: Public report view by share token
+      description: |-
+        No authentication required. Returns the report if the share link is active and not expired.
+
+        Sandbox: this operation takes NO API key — the 64-hex share token in the path is the credential, so it behaves identically on both tiers and there is no sandbox execution mode to differ. Published here so a sandbox-generated client carries the same retrieval methods it will use in production.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Public report data
+        "404":
+          description: Share link not found or expired
+  /api/share/{token}/graph:
+    get:
+      tags:
+        - Sharing
+      summary: Public graph view by share token
+      description: "Sandbox: this operation takes NO API key — the 64-hex share token in the path is the credential, so it behaves identically on both tiers and there is no sandbox execution mode to differ. Published here so a sandbox-generated client carries the same retrieval methods it will use in production."
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Public graph data
+        "404":
+          description: Share link not found or expired
+  # <<< END GENERATED:no-tier-paths >>>
+
+  # #748 Slices C and D — the saved-report families (token + block in C, multichain in D),
+  # SIMULATED on owner-scoped `sandbox_objects` state. They were in the M6 unavailable region
+  # until then; a sandbox credential is no longer refused on them, so the generated 403 left with
+  # them. The region id stays `slice-c-report-paths` so the marker is stable across slices.
+  # <<< GENERATED:slice-c-report-paths — do not edit by hand; see scripts/generate-sandbox-contract.mjs >>>
   /api/v1/token/reports:
     post:
       tags:
         - Saved Reports
       summary: Save a token security report
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Saving a token report writes a durable paid artifact and a credit transaction."
+      description: "Sandbox: SIMULATED. Saves the report under the `reportPublicId` YOU supply — the same idempotency key paid uses — as an owner-scoped sandbox object, and derives `tokenSymbol` and `securityScore` from your `reportData` exactly as paid does. Re-posting the same `reportPublicId` returns the ORIGINAL stored values with `duplicate: true` whatever the retry body says, because paid resolves the duplicate before it looks at the new body. A non-actionable `honeypot.status` answers the paid 200 envelope with `id: null` and stores nothing. `charged: true` on the 201 mirrors the successful paid save branch; the sandbox deducts no real credits, quota, usage allowance or billing state. Sandbox reports are EPHEMERAL: each expires 24 hours after it was created, and reading does not extend that. Your paid saved reports are never read or written."
       requestBody:
         required: true
         content:
@@ -2345,13 +2190,11 @@ paths:
                         type: boolean
                         enum:
                           - true
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
     get:
       tags:
         - Saved Reports
       summary: List saved token reports
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Lists durable paid artifacts; a sandbox compute call persists nothing."
+      description: "Sandbox: SIMULATED. Lists the token reports YOU saved with this sandbox key, with the paid row shape, the paid pagination (`limit` default 20 / max 100, `offset`) and `total` as your own live count. `id` is the integer id, as on paid. Your paid reports never appear here."
       parameters:
         - name: limit
           in: query
@@ -2374,14 +2217,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TokenReportListResponse"
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
   /api/v1/block/reports:
     post:
       tags:
         - Saved Reports
       summary: Save a block analysis (MEV) report
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Saving a block report writes a durable paid artifact."
+      description: "Sandbox: SIMULATED. This is NOT a create on either tier — `POST /api/v1/block/analyze` is what saves a block report, and this resolves one that already exists, optionally renaming it. Supply `reportPublicId`/`reportId` to address it directly, or `blockNumber` + `network` to find the one your last analysis of that subject saved. With no such report — including one that has expired — it answers 410 `LEGACY_CACHE_NO_SAVE`, the code paid uses when there is nothing left to save. Owner-scoped and 24h ephemeral; no paid table is touched."
       requestBody:
         required: true
         content:
@@ -2438,13 +2279,11 @@ paths:
                           - string
                           - "null"
                         description: Same value as `reportId`; both keys are emitted.
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
     get:
       tags:
         - Saved Reports
       summary: List saved block reports
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Lists durable paid artifacts; a sandbox compute call persists nothing."
+      description: "Sandbox: SIMULATED. Lists the block reports YOUR analyses saved with this sandbox key, with the paid row shape and pagination. The MEV counts come from the analysis `summary` exactly as paid derives them, so a fixture carrying no `summary` reports zeroes rather than recounting its arrays. Your paid reports never appear here."
       parameters:
         - name: limit
           in: query
@@ -2467,8 +2306,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BlockReportListResponse"
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
   /api/v1/block/reports/{id}:
     get:
       tags:
@@ -2483,7 +2320,7 @@ paths:
         id. Returns 404 if the report does not exist or is not owned by the
         caller.
 
-        NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Retrieves a durable paid artifact by id.
+        Sandbox: SIMULATED. Accepts either the UUID or the legacy integer id, split exactly as paid splits them. An id that is unknown, not yours, from another object family, or expired all answer one identical 404 — the response can never be used to prove an object exists.
       parameters:
         - name: id
           in: path
@@ -2500,8 +2337,6 @@ paths:
                 $ref: "#/components/schemas/BlockReportResponse"
         "401":
           description: Unauthorized
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
         "404":
           description: Report not found or not owned by the caller
   /api/v1/multichain/reports:
@@ -2509,7 +2344,7 @@ paths:
       tags:
         - Saved Reports
       summary: Save a multi-chain wallet report
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Saving a multichain report writes a durable paid artifact."
+      description: "Sandbox: SIMULATED. This is NOT a create on either tier — `POST /api/v1/multichain/scan` is what saves a multichain report, and this resolves one that already exists, optionally renaming it. Supply `reportPublicId`/`reportId` to address it directly, or `address` to resolve the report your last scan of that address saved. The address form only works while that scan's 5-minute correlation window is still open: once it lapses this answers 410 `LEGACY_CACHE_NO_SAVE` EVEN IF the report itself is still retrievable by its id, because paid does not reconstruct an expired cache from stored reports either. A successful rename refreshes the report's 24-hour expiry. Owner-scoped; no paid table is touched."
       requestBody:
         required: true
         content:
@@ -2563,13 +2398,11 @@ paths:
                           - string
                           - "null"
                         description: Same value as `reportId`; both keys are emitted.
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
     get:
       tags:
         - Saved Reports
       summary: List saved multi-chain reports
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Lists durable paid artifacts; a sandbox compute call persists nothing."
+      description: "Sandbox: SIMULATED. Lists the multichain reports YOUR scans saved with this sandbox key, with the paid row shape and pagination. The SAME address may legitimately appear more than once: each scan outside the 5-minute correlation window saves a new report, and the earlier one remains listed until its own 24-hour expiry. Cache state does not affect what is listed, and reading never extends a report's life. Your paid reports never appear here."
       parameters:
         - name: limit
           in: query
@@ -2592,8 +2425,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MultichainReportListResponse"
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
   /api/v1/multichain/reports/{id}:
     get:
       tags:
@@ -2608,7 +2439,7 @@ paths:
         report id. Returns 404 if the report does not exist or is not owned by
         the caller.
 
-        NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Retrieves a durable paid artifact by id.
+        Sandbox: SIMULATED. Accepts either the UUID or the legacy integer id, split exactly as paid splits them, with no cache lookup. An id that is unknown, not yours, from another object family, or expired all answer one identical 404.
       parameters:
         - name: id
           in: path
@@ -2625,131 +2456,22 @@ paths:
                 $ref: "#/components/schemas/MultichainReportResponse"
         "401":
           description: Unauthorized
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
         "404":
           description: Report not found or not owned by the caller
-  /api/investigate:
-    post:
-      tags:
-        - AI Investigation
-      summary: Start or continue AI investigation
-      description: |-
-        Send a message to the AI investigation agent. Returns SSE stream with analysis steps, tool calls, and results. Costs 1 AI investigation credit (when creating new investigation).
+  # <<< END GENERATED:slice-c-report-paths >>>
 
-        NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. An investigation streams from a real LLM call, consumes AI credits and persists an investigation row. None of that is simulated for sandbox keys.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - message
-              properties:
-                message:
-                  type: string
-                  maxLength: 5000
-                investigationId:
-                  type: integer
-                  description: Continue existing investigation
-                reportId:
-                  type: string
-                  description: Reference existing report
-                byoKey:
-                  type: string
-                  description: Bring-your-own Claude API key
-      responses:
-        "200":
-          description: SSE stream of investigation events
-          content:
-            text/event-stream: {}
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
-  /api/investigations:
-    get:
-      tags:
-        - AI Investigation
-      summary: List investigations
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Lists persisted investigations."
-      parameters:
-        - name: limit
-          in: query
-          description: Page size. Values above the maximum are clamped, not rejected.
-          schema:
-            type: integer
-            default: 20
-            maximum: 50
-        - name: offset
-          in: query
-          description: Zero-based row offset. This surface pages by offset, not page number.
-          schema:
-            type: integer
-            default: 0
-            minimum: 0
-      responses:
-        "200":
-          description: Investigations list (offset-paged)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/InvestigationListResponse"
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
-  /api/investigations/{id}:
-    get:
-      tags:
-        - AI Investigation
-      summary: Get investigation detail
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Retrieves one persisted investigation."
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: Full investigation with messages and tool calls
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/InvestigationResponse"
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
-        "404":
-          description: Not found
-    delete:
-      tags:
-        - AI Investigation
-      summary: Archive investigation
-      description: |-
-        Soft-delete. Hides the investigation from the default list but preserves its data. #729: previously published as `POST /api/investigations/{id}/archive`, which has no runtime route. Archiving has always been DELETE on the resource — the shape the dashboard calls.
-
-        NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Deletes one persisted investigation.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: Archived
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/InvestigationArchivedResponse"
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
-        "404":
-          description: Not found
+  # #748 Slice E — the watchlist + alerts family. Mirrors the paid operations exactly; the
+  # execution is sandbox-scoped state that the monitoring cron cannot see.
+  # <<< GENERATED:slice-e-watchlist-paths — do not edit by hand; see scripts/generate-sandbox-contract.mjs >>>
   /api/watchlist:
     get:
       tags:
         - Watchlist
       summary: List watchlist items
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Watchlist entries are monitored by a real scheduled job that can raise alerts and send notifications, so nothing a sandbox key creates may enter it."
+      description: |-
+        List your monitored addresses. On the paid API these are the entries a scheduled job polls; on sandbox nothing polls them.
+
+        Sandbox: SIMULATED. Lists YOUR ACCOUNT's ACTIVE watchlist items — these are owned by the account, so every sandbox key you hold on it sees and mutates the same ones — with the paid row shape (snake_case, integer flags), the paid pagination (`page` default 1, `limit` default 20 / max 100) and `alert_count` for each item. A removed item is soft-deleted and disappears from here exactly as on paid, while staying readable through its alert history. NOTHING IS MONITORED: no scheduled job sees sandbox items, no provider is polled, and no email, Telegram message or webhook is ever sent. Items are EPHEMERAL — each expires 24 hours after its last change — and your paid watchlist is never read or written.
       parameters:
         - name: page
           in: query
@@ -2771,16 +2493,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WatchlistListResponse"
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
     post:
       tags:
         - Watchlist
       summary: Add address to watchlist
       description: |-
-        Monitor an address for new transactions. Alerts delivered via email, Telegram, or webhook. Checked every 5 minutes.
+        Monitor an address for new transactions. ON THE PAID API the address is polled about every five minutes and alerts are delivered through the channels you enable here. ON SANDBOX nothing is polled and nothing is delivered — see below.
 
-        NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Adding an entry enlists an address with a real scheduled monitor. Paid also answers 403 here when the plan has no watchlist allowance — that is a PLAN limit and is a different thing from the sandbox refusal, which applies to every sandbox key.
+        Sandbox: SIMULATED. Validates exactly as paid does, in the same order: the address/network family check first (422), then the monitored-network gate (400 `WATCHLIST_NETWORK_UNSUPPORTED`), then the limit. It is an UPSERT on (account, address, network) and answers 201 either way: re-posting an address you already watch REPLACES `label`, `threshold_value`, `threshold_max`, `track_all` and the three `notify_*` flags — an omitted field becomes its default, it is not merged — keeps the same `id` and `created_at`, preserves the monitoring columns, and re-activates a removed item together with its alert history. The sandbox limit is 25 ACTIVE items PER ACCOUNT (and 50 including removed ones, which expire 24h after their last change), answered as the same 403 paid uses for its plan limit; it is a SANDBOX EXECUTION LIMIT, not a plan quota, and like paid it applies before the subject is written, so at the limit even re-posting an item you already watch is refused. The limits are PER ACCOUNT, not per key. `is_contract` and `deployer_address` are NOT detected — no provider is called — so they are 0 and null except for one documented fixture address that returns the contract shape. Creating an item seeds deterministic SIMULATED alerts so the alert endpoints are exercisable; no chain was observed and nothing was delivered.
       requestBody:
         required: true
         content:
@@ -2846,7 +2566,10 @@ paths:
       tags:
         - Watchlist
       summary: Update watchlist item
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Mutates a monitored entry."
+      description: |-
+        Update one entry.
+
+        Sandbox: SIMULATED. Paid's partial-update semantics field for field: an omitted field is left alone, an explicit `false` on a `notify_*` flag persists as `0`, and an empty-string `label` really does set the label to the empty string. The `notify_*` flags are CONTRACT DATA ONLY on this tier — setting all three arms nothing, because no delivery path exists for sandbox state. A successful update refreshes the item's 24-hour expiry. An id that is unknown, not yours, from another object family, or expired all answer one identical 404.
       parameters:
         - name: id
           in: path
@@ -2877,15 +2600,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WatchlistItemResponse"
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
         "404":
           description: Item not found
     delete:
       tags:
         - Watchlist
       summary: Remove from watchlist
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Removes a monitored entry."
+      description: |-
+        Remove one entry.
+
+        Sandbox: SIMULATED. A SOFT delete, as on paid: the item stops being listed, its alert history stays readable through `GET /api/watchlist/{id}/alerts`, and re-posting the same address and network restores it with the SAME id and that history. Also as on paid, this answers 200 for any id — including one you never created or that belongs to someone else — and it never touches anything but your own item, so the response cannot be used to find out whether an id exists. A successful delete refreshes the item's 24-hour expiry.
       parameters:
         - name: id
           in: path
@@ -2899,14 +2623,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OkFlagResponse"
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
   /api/watchlist/{id}/alerts:
     get:
       tags:
         - Watchlist
       summary: Alerts for a single watchlist item
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Alerts are produced by the real monitor against real on-chain activity."
+      description: |-
+        Alert history for one entry. On the paid API these rows are produced by the monitor from real on-chain activity; on sandbox they are synthetic.
+
+        Sandbox: SIMULATED. Returns the deterministic SIMULATED alerts attached to one of your account's items, with the paid row shape and the paid pagination (`page` default 1, `limit` default 20 / max 100). `details` is a JSON **STRING**, as on paid — parse it client-side; it carries the same transaction keys plus `"simulated": true`. The `notified_*` flags are always `0` because nothing was delivered: NO monitoring ran, no provider was polled and no address was observed, and the `tx_hash` values are synthetic. A removed item keeps its readable history, as on paid. An id that is unknown, not yours, from another family, or expired all answer one identical 404, and reading never extends an item's life.
       parameters:
         - name: id
           in: path
@@ -2933,14 +2658,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WatchlistAlertListResponse"
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
   /api/alerts:
     get:
       tags:
         - Watchlist
       summary: All alerts across user's watchlist
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Alerts are produced by the real monitor against real on-chain activity."
+      description: |-
+        The account-wide alert feed. On the paid API these rows are produced by the monitor from real on-chain activity; on sandbox they are synthetic.
+
+        Sandbox: SIMULATED. The account-wide feed over YOUR ACCOUNT's sandbox items' simulated alerts, with the paid joined fields (`address`, `network`, `label`), the paid default page size of 50 and max 100, newest first. Removed items still contribute their history, as on paid. These alerts were generated when you created the items, not by monitoring: no scheduled job, no provider call and no notification of any kind is involved on this tier. Your paid alerts never appear here.
       parameters:
         - name: page
           in: query
@@ -2962,14 +2688,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AlertListResponse"
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
+  # <<< END GENERATED:slice-e-watchlist-paths >>>
+
+  # #748 Slice F — the notification settings singleton (REAL sandbox-owned ephemeral state, no
+  # channel armed) and the webhook delivery audit (a committed deterministic FIXTURE; nothing was
+  # ever sent). Two different execution modes, deliberately documented as such.
+  # <<< GENERATED:slice-f-notification-paths — do not edit by hand; see scripts/generate-sandbox-contract.mjs >>>
   /api/notifications/settings:
     get:
       tags:
         - Notifications
       summary: Get notification settings
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Reading notification settings CREATES the settings row when none exists, so even the read is a write to paid state."
+      description: |-
+        Read your notification settings.
+
+        Sandbox: SIMULATED. These are REAL settings, stored and read back for real, owned by YOUR ACCOUNT — every sandbox key on the account reads and writes the same ones. As on paid, this operation is NOT purely a read: the first call CREATES the default settings (email enabled, everything else off) and returns them, so the first response you see matches paid's. What the values do NOT do on this tier is arm anything: there is no sandbox monitoring job, and no email, Telegram message or webhook request is EVER sent whatever you enable here. Your paid notification settings are never read or written. The sandbox settings are EPHEMERAL — they expire 24 hours after the last change, and a read does not extend that; once expired, the next call creates the defaults again.
       responses:
         "200":
           description: Notification preferences
@@ -3018,23 +2751,14 @@ paths:
                       dailyDigest:
                         type: boolean
                         description: Send one daily summary instead of instant alerts.
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
     patch:
       tags:
         - Notifications
       summary: Update notification settings
       description: |-
-        Account-level notification configuration. Used by watchlist alert
-        delivery (per-item `notify_email` / `notify_telegram` / `notify_webhook`
-        flags decide which channels fire for that address).
+        Update your notification settings.
 
-        All fields are optional; PATCH semantics — provided fields are
-        updated, omitted fields are preserved. Webhook delivery to the
-        configured URL is signed with HMAC SHA-256 (`X-Signature-256` header)
-        when `webhook_secret` is set. See `docs/integration/webhooks.md`.
-
-        NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Writes the notification settings a real delivery pipeline reads.
+        Sandbox: SIMULATED, with paid's partial-update semantics field for field: an omitted field keeps its stored value, an explicit `false` persists as `0`, and a `PATCH` before any `GET` creates the defaults first and then applies your change. The response is paid's explicit column projection, and `webhook_secret` is NOT in it — paid withholds it too; a secret you send is kept only so a later partial update behaves as on paid, is never returned, and is never used to sign or send anything. Everything you set here is CONTRACT DATA: enabling email, Telegram or webhook delivery on a sandbox credential binds no chat, queues no delivery and sends no request. A successful update refreshes the settings' 24-hour expiry.
       requestBody:
         required: true
         content:
@@ -3090,17 +2814,170 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NotificationSettingsRowResponse"
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
-  /api/notifications/telegram/connect:
+  /api/v1/webhook/deliveries:
+    get:
+      tags:
+        - Account
+      summary: List webhook delivery audit (#41 Phase 1)
+      description: |-
+        Webhook delivery audit, newest first.
+
+        Sandbox: FIXTURE. This returns a COMMITTED SET OF SYNTHETIC DELIVERY RECORDS for client integration testing. THEY ARE NOT EVIDENCE THAT ANY WEBHOOK REQUEST WAS SENT: the sandbox delivers nothing, and that is exactly why this is a fixture rather than stored sandbox history — a saved delivery lifecycle would claim an outbound attempt that never happened. The same rows are returned for every sandbox credential and they never change. The QUERY contract is paid's: optional `status` from the same five values with the same 422 on anything else, `limit` default 20 / min 1 / max 100, opaque `cursor` with the same 422 on a malformed one, `id`-descending order and the same `next_cursor` handshake, and the fixture covers a delivered record, a scheduled retry, a terminal failure, an in-flight attempt and a disabled endpoint so every branch is exercisable. Privacy matches paid exactly: `endpoint_host` only — no full URL, no secret, no request body. Your paid delivery history is never read.
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum:
+              - delivering
+              - delivered
+              - retry_scheduled
+              - failed
+              - disabled
+          description: Filter to a single delivery status.
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+          description: Page size (default 20, max 100).
+        - in: query
+          name: cursor
+          schema:
+            type: string
+          description: Pagination cursor returned by the previous page (`next_cursor`).
+      responses:
+        "200":
+          description: Audit page
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    required:
+                      - deliveries
+                      - next_cursor
+                    properties:
+                      deliveries:
+                        type: array
+                        items:
+                          type: object
+                          required:
+                            - event_id
+                            - event_type
+                            - status
+                            - attempts_count
+                            - endpoint_host
+                            - created_at
+                            - updated_at
+                          properties:
+                            event_id:
+                              type: string
+                              example: wh_alert_12345_v1
+                            event_type:
+                              type: string
+                              enum:
+                                - watchlist_alert
+                                - test
+                              example: watchlist_alert
+                            alert_id:
+                              type:
+                                - integer
+                                - "null"
+                              description: Linked watchlist_alert id; null for test deliveries.
+                            endpoint_host:
+                              type: string
+                              description: Hostname of the configured receiver. Full URL never returned.
+                              example: receiver.example.com
+                            status:
+                              type: string
+                              enum:
+                                - delivering
+                                - delivered
+                                - retry_scheduled
+                                - failed
+                                - disabled
+                            attempts_count:
+                              type: integer
+                              minimum: 0
+                              example: 1
+                            next_retry_at:
+                              type:
+                                - string
+                                - "null"
+                              format: date-time
+                              description: ISO-8601 UTC. Non-null only when status=retry_scheduled.
+                            last_attempt_at:
+                              type:
+                                - string
+                                - "null"
+                              format: date-time
+                              description: ISO-8601 UTC of most recent delivery attempt.
+                            last_http_status:
+                              type:
+                                - integer
+                                - "null"
+                              description: HTTP status from last attempt; null on network-level failure.
+                              example: 200
+                            last_error_class:
+                              type:
+                                - string
+                                - "null"
+                              description: Error category (e.g. http_2xx, http_5xx, http_429, http_4xx_terminal, http_410_gone, AbortError, TypeError). Never carries response body.
+                              example: http_2xx
+                            delivered_at:
+                              type:
+                                - string
+                                - "null"
+                              format: date-time
+                              description: ISO-8601 UTC; set once on first 2xx, never cleared.
+                            created_at:
+                              type: string
+                              format: date-time
+                            updated_at:
+                              type: string
+                              format: date-time
+                      next_cursor:
+                        type:
+                          - string
+                          - "null"
+                        description: Pass to `?cursor=` for the next page; null when no more pages.
+        "401":
+          description: Authentication required or invalid API key
+        "422":
+          description: Invalid query parameter (e.g. unsupported status)
+  # <<< END GENERATED:slice-f-notification-paths >>>
+
+  # #748 Slice G — AI investigations, the FINAL exercisability slice. Real owner-scoped
+  # conversation state; deterministic synthetic assistant content; no model call, no AI credit.
+  # <<< GENERATED:slice-g-investigation-paths — do not edit by hand; see scripts/generate-sandbox-contract.mjs >>>
+  /api/investigate:
     post:
       tags:
-        - Notifications
-      summary: Connect Telegram chat
+        - AI Investigation
+      summary: Start or continue AI investigation
       description: |-
-        Submit chat ID obtained by messaging the OnChainRisk bot with /start and copying the code it returns.
+        Send a message to the AI investigator. Server-Sent Events.
 
-        NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Connecting Telegram is an external side effect against a real chat.
+        Sandbox: SIMULATED. **NO LANGUAGE MODEL IS CALLED.** No tool runs, no blockchain data is read, no AI credit or monthly investigation allowance is consumed, and your own `byoKey` is never used or stored. The assistant reply is DETERMINISTIC SYNTHETIC TEXT that says so in its own body, so it cannot be mistaken for a finding — nothing in it is an analysis of any address, token, block or report.
+
+        What IS real is the conversation lifecycle, which is the whole point of the tier: the stream is a genuine `text/event-stream` in the paid event vocabulary — `investigation_id`, `thinking`, `text`, `done`, each frame `data: <json>` — the id it gives you resolves through GET /api/investigations/{id} with the stored history, and passing that id back as `investigationId` CONTINUES the same investigation, appending the turn and advancing `message_count` exactly as paid does. Investigations are owned by your ACCOUNT, so every sandbox key you hold sees and continues the same ones.
+
+        Validation is paid's, in paid's order and as REAL HTTP statuses before any stream exists: malformed or non-object JSON and a missing, blank or over-5000-character message answer 400; two artifact selectors answer 400 `AMBIGUOUS_REF`; a present-but-malformed `rwaRef` answers 400 `MALFORMED_REF`; an unknown or unowned `investigationId` answers 404. `reportId`, `tokenRef` and `blockRef` are recorded as the investigation's family and reference without reading any paid report. The Tokenized-Asset family has no sandbox artifact store, so a `rwaRef` resolves as it does for an artifact you do not own.
+
+        LAUNCHING FROM A REPORT RESUMES, as on paid. If you post `reportId` with no `investigationId` and a non-archived investigation for that same report already has history, the stream is a single `existing_investigation` event carrying its id and NOTHING is appended — your client should follow that id rather than starting over. An archived one is not resumed, so a fresh launch creates a new investigation. A `tokenRef` launch also resumes the existing investigation but continues it as another turn, and a launch with no reference always creates a new one.
+
+        YOUR ACCOUNT may hold 25 stored investigations, ARCHIVED ONES INCLUDED — archiving does not free a slot, only expiry does — and each investigation accepts 20 messages before its status becomes `limit_reached`. Both are sandbox execution limits, not plan quotas. Investigations are EPHEMERAL: each expires 24 hours after its last change, and no paid investigation row is ever created, read or written.
       requestBody:
         required: true
         content:
@@ -3108,37 +2985,104 @@ paths:
             schema:
               type: object
               required:
-                - chatId
+                - message
               properties:
-                chatId:
+                message:
                   type: string
+                  maxLength: 5000
+                investigationId:
+                  type: integer
+                  description: Continue existing investigation
+                reportId:
+                  type: string
+                  description: Reference existing report
+                byoKey:
+                  type: string
+                  description: Bring-your-own Claude API key
       responses:
         "200":
-          description: Telegram linked
+          description: SSE stream of investigation events
           content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TelegramLinkResponse"
-        "400":
-          description: Invalid chat ID
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
-  /api/notifications/telegram/disconnect:
-    post:
+            text/event-stream: {}
+  /api/investigations:
+    get:
       tags:
-        - Notifications
-      summary: Disconnect Telegram
-      description: "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Disconnecting Telegram mutates a real external binding."
+        - AI Investigation
+      summary: List investigations
+      description: |-
+        List your investigations, newest-updated first.
+
+        Sandbox: SIMULATED. Your ACCOUNT's own sandbox investigations, with the paid row shape, the paid pagination (`limit` default 20 / max 50, `offset`) and a `total` computed from the same visible set as the page. Archived investigations are hidden here and still readable by id, as on paid. The joined report, block, token and Tokenized-Asset columns are `null`: a sandbox investigation is linked to no paid artifact, which is also what paid returns when a linked artifact is gone. Your paid investigations never appear here.
+      parameters:
+        - name: limit
+          in: query
+          description: Page size. Values above the maximum are clamped, not rejected.
+          schema:
+            type: integer
+            default: 20
+            maximum: 50
+        - name: offset
+          in: query
+          description: Zero-based row offset. This surface pages by offset, not page number.
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
       responses:
         "200":
-          description: Telegram unlinked
+          description: Investigations list (offset-paged)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OkFlagResponse"
-        "403":
-          $ref: "#/components/responses/SandboxNotSupported"
-  # <<< END GENERATED:m6-unavailable-paths >>>
+                $ref: "#/components/schemas/InvestigationListResponse"
+  /api/investigations/{id}:
+    get:
+      tags:
+        - AI Investigation
+      summary: Get investigation detail
+      description: |-
+        Retrieve one investigation with its full message history.
+
+        Sandbox: SIMULATED. Returns the stored sandbox investigation in the paid detail shape, including every message of the conversation — your messages as you sent them and the synthetic replies, which are labelled as such in their own text. An ARCHIVED investigation is still readable here and reports `status: "archived"`, as on paid. An id that is unknown, not yours, from another object family, or expired all answer one identical 404, so the response can never be used to prove an investigation exists. The report-context fields are `null` because there is no linked paid report whose access could be downgraded.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Full investigation with messages and tool calls
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvestigationResponse"
+        "404":
+          description: Not found
+    delete:
+      tags:
+        - AI Investigation
+      summary: Archive investigation
+      description: |-
+        Archive one investigation.
+
+        Sandbox: SIMULATED. A SOFT archive, as on paid: the investigation stops being listed and stays readable by id with `status: "archived"`. Sending another message with its `investigationId` RE-ACTIVATES it and appends to its history, which is paid's own behaviour — neither tier treats an archive as a terminal state. Also as on paid, a repeat archive, an unknown id and an id that is not yours all answer 404 — this route's 404 is real, unlike the watchlist one. A successful archive refreshes the investigation's 24-hour expiry.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Archived
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvestigationArchivedResponse"
+        "404":
+          description: Not found
+  # <<< END GENERATED:slice-g-investigation-paths >>>
 
 components:
   securitySchemes:
@@ -3187,9 +3131,21 @@ components:
         `paid_only` when the endpoint exists but is a paid feature, or
         `unsupported` when the path is not part of the sandbox API at all
         (e.g. a guessed/nonexistent endpoint shape). No risk or report data is
-        returned. Sandbox reports are never saved (`_sandbox.reports_saved`
-        is always `false`); persistent reports and retrieval are a paid plan
-        feature.
+        returned, and THIS REFUSED REQUEST saves nothing: an operation that
+        answers `sandbox_not_supported` creates no report state of any kind,
+        so there is no id to follow and nothing to retrieve afterwards.
+
+        That is a statement about the refusal, not about the sandbox. Some
+        sandbox operations DO persist and return retrievable reports — see
+        `POST /api/v1/block/analyze` and the saved-report operations — each
+        owner-scoped and ephemeral. There is no single sandbox lifetime rule:
+        how long a given report lives, and what (if anything) refreshes it,
+        is specific to the operation that created it and is stated in that
+        operation's own description. In particular, do not assume that
+        reading a report or receiving a `cached: true` repeat extends it.
+        Read the relevant operation's description, and
+        `_sandbox.reports_saved` on a successful response, rather than
+        assuming either way.
       content:
         application/json:
           schema:
@@ -7229,149 +7185,3 @@ components:
             type: string
           description: Sorted names of the business fields whose values came from the documented fixture, promoted through normal sandbox gating/truncation for parser exercise. Empty on every bounded response. `execution_mode` — not this list — is what tells you the result is synthetic.
     # <<< END GENERATED:check-schemas >>>
-    SandboxGraphResponse:
-      type: object
-      description: |
-        Sandbox graph preview response. Aggregated counterparty edges in
-        the same broad shape as paid `/api/graph/expand`, capped to 20
-        nodes / 30 edges and windowed to the last 7 days. Integrators can
-        re-point clients at paid `/api/graph/expand` later without
-        rewriting response handling.
-
-        **Window invariant**: every aggregated edge field
-        (`txCount`, `value`, `valueWei`, `firstTx`, `lastTx`,
-        `tokenBreakdown`) reflects ONLY transactions whose timestamp
-        falls inside the 7-day window. A counterparty whose only
-        interaction is older than 7 days is absent from the response;
-        a counterparty with mixed history shows the recent-only slice.
-      required: [success, data]
-      properties:
-        success: { type: boolean, example: true }
-        data:
-          type: object
-          required: [address, network, nodes, edges, _sandbox]
-          properties:
-            address: { type: string }
-            network: { type: string }
-            nodes:
-              type: array
-              maxItems: 20
-              items: { $ref: '#/components/schemas/SandboxGraphNode' }
-            edges:
-              type: array
-              maxItems: 30
-              items: { $ref: '#/components/schemas/SandboxGraphEdge' }
-            partial:
-              type: boolean
-              description: |
-                True when at least one of: tx fetch hit the cap, nodes
-                were truncated, edges were truncated, or the upstream
-                analysis service flagged the response as partial.
-            _sandbox:
-              $ref: '#/components/schemas/SandboxGraphMarker'
-
-    SandboxGraphNode:
-      type: object
-      description: |
-        Counterparty node. Schema mirrors paid `/api/graph/expand` node
-        shape so a sandbox client can switch to paid without changes.
-      required: [address]
-      properties:
-        address: { type: string }
-        label: { type: [string, 'null'] }
-        isTarget: { type: boolean, default: false }
-        totalValue:
-          type: string
-          description: |
-            Native value formatted (e.g. "1.5" ETH/BNB/TRX). String to
-            preserve precision across networks.
-        txCount: { type: integer, minimum: 0 }
-        tokens:
-          type: array
-          items: { type: string }
-
-    SandboxGraphEdge:
-      type: object
-      description: |
-        Aggregated edge between target and counterparty. Same field names
-        as paid `/api/graph/expand` edges. Sandbox-only deviations are
-        documented per-field below.
-      required: [from, to, value, valueWei, txCount]
-      properties:
-        from: { type: string }
-        to: { type: string }
-        fromLabel: { type: [string, 'null'] }
-        toLabel: { type: [string, 'null'] }
-        value:
-          type: string
-          description: Native value formatted; sandbox windowed to last 7 days.
-        valueWei:
-          type: string
-          description: Native value in raw integer units.
-        txCount: { type: integer, minimum: 1 }
-        firstTx:
-          type: [integer, 'null']
-          description: Unix timestamp of first interaction within the 7d window.
-        lastTx:
-          type: [integer, 'null']
-          description: Unix timestamp of last interaction within the 7d window.
-        tokenBreakdown:
-          type: array
-          description: Per-token volume breakdown (subset in sandbox).
-          items:
-            type: object
-
-    SandboxGraphMarker:
-      type: object
-      description: |
-        Sandbox marker for graph preview responses. Distinct from
-        `SandboxMarker` (which is shaped for `/api/v1/check`). Both share
-        `profile`, `coverage_days`, `gated_fields`, `truncated_fields`,
-        `upgrade_url`, `docs_url`; this variant adds graph-specific
-        `limits` and `partial`.
-      required:
-        - profile
-        - coverage_days
-        - reports_saved
-        - limits
-        - truncated_fields
-        - gated_fields
-        - upgrade_url
-        - docs_url
-      properties:
-        profile:
-          type: string
-          enum: [sandbox]
-        coverage_days:
-          type: integer
-          enum: [7]
-        reports_saved:
-          type: boolean
-          enum: [false]
-        partial:
-          type: boolean
-          description: Mirrors `data.partial` for clients that read the marker.
-        limits:
-          type: object
-          required: [depth, max_nodes, max_edges]
-          properties:
-            depth: { type: integer, enum: [1] }
-            max_nodes: { type: integer, enum: [20] }
-            max_edges: { type: integer, enum: [30] }
-        truncated_fields:
-          type: object
-          additionalProperties: { type: string }
-          description: |
-            Map of field-name → truncation reason. Always includes
-            `history: "last_7_days"`. Adds `depth: "max_1"` when the
-            request asked for depth > 1, `nodes: "max_20"` when nodes
-            were truncated, `edges: "max_30"` when edges were truncated.
-        gated_fields:
-          type: array
-          items: { type: string }
-          description: |
-            Paid-only fields not present in the sandbox graph response —
-            includes `clusters`, `entityExpansion`, `crossChainGraph`,
-            `historicalTraversal`, `aiSummary`.
-        upgrade_url: { type: string, format: uri }
-        docs_url: { type: string, format: uri }

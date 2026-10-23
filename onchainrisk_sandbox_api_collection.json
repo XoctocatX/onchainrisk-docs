@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "onchainrisk-sandbox-v1",
     "name": "OnChainRisk Sandbox API",
-    "description": "Public sandbox tier — integration testing against real OnChainRisk API.\n\n**Setup (one-time, via dashboard — NOT via this collection):**\n1. Sign up at https://onchainrisk.io/register (CAPTCHA required)\n2. Dashboard → API Keys → Create sandbox key (1 max for free tier)\n3. Copy the key (shown once)\n4. In Postman: set env var `sandbox_api_key` to your key\n\nAll requests here use that key via `Authorization: Bearer {{sandbox_api_key}}`. Key management (create/rotate/revoke) lives in the dashboard — not exposed to sandbox because the self-service flow is intentional.\n\n**Sandbox gates expensive fields** — responses match paid shape but `crossChain`, `tokenFlow`, `clusters`, `honeypot`, etc. are always `null`/`[]`. See `_sandbox.gated_fields[]` in every response for the authoritative list.",
+    "description": "Public sandbox tier — integration testing against real OnChainRisk API.\n\n**Setup (one-time, via dashboard — NOT via this collection):**\n1. Sign up at https://onchainrisk.io/register (CAPTCHA required)\n2. Dashboard → API Keys → Create sandbox key (1 max for free tier)\n3. Copy the key (shown once)\n4. In Postman: set env var `sandbox_api_key` to your key\n\nThe authenticated requests here use that key via `Authorization: Bearer {{sandbox_api_key}}`. The one documented exception is the two **public share link** requests at the end: they send no `Authorization` header at all, because the 64-hex share token in the path *is* the credential. Do not add a key to them. Key management (create/rotate/revoke) lives in the dashboard — not exposed to sandbox because the self-service flow is intentional.\n\n**One graph operation, both tiers.** `POST /api/graph/expand` is the graph path on sandbox and on paid; the credential selects the execution (sandbox: real address and network, depth 1, recent activity only, capped nodes/edges, no billing). If you integrated against an older sandbox graph path, see the migration note in `integration/capability-matrix.md`.\n\n**Sandbox gates expensive fields** — responses match paid shape but `crossChain`, `tokenFlow`, `clusters`, `honeypot`, etc. are always `null`/`[]`. See `_sandbox.gated_fields[]` in every response for the authoritative list.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -387,64 +387,7 @@
       ]
     },
     {
-      "name": "2. Graph preview — POST /api/v1/sandbox/graph/expand",
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          },
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\",\n  \"depth\": 1\n}"
-        },
-        "url": {
-          "raw": "{{base_url}}/api/v1/sandbox/graph/expand",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "v1",
-            "sandbox",
-            "graph",
-            "expand"
-          ]
-        },
-        "description": "Cheap sandbox graph preview. Depth 1, last 7 days, ≤20 nodes, ≤30 edges. Aggregated counterparty edges in the same shape as paid /api/graph/expand. No report persistence, no usage row, no credit charge. Upgrade for full historical graph expansion."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', () => pm.response.to.have.status(200));",
-              "const d = pm.response.json().data;",
-              "pm.test('nodes is array', () => pm.expect(d.nodes).to.be.an('array'));",
-              "pm.test('edges is array', () => pm.expect(d.edges).to.be.an('array'));",
-              "pm.test('nodes <= 20', () => pm.expect(d.nodes.length).to.be.at.most(20));",
-              "pm.test('edges <= 30', () => pm.expect(d.edges.length).to.be.at.most(30));",
-              "pm.test('_sandbox.profile = sandbox', () => pm.expect(d._sandbox.profile).to.equal('sandbox'));",
-              "pm.test('_sandbox.coverage_days = 7', () => pm.expect(d._sandbox.coverage_days).to.equal(7));",
-              "pm.test('_sandbox.limits.depth = 1', () => pm.expect(d._sandbox.limits.depth).to.equal(1));",
-              "pm.test('_sandbox.limits.max_nodes = 20', () => pm.expect(d._sandbox.limits.max_nodes).to.equal(20));",
-              "pm.test('_sandbox.limits.max_edges = 30', () => pm.expect(d._sandbox.limits.max_edges).to.equal(30));",
-              "pm.test('_sandbox.gated_fields includes clusters', () => pm.expect(d._sandbox.gated_fields).to.include('clusters'));",
-              "pm.test('reports_saved = false', () => pm.expect(d._sandbox.reports_saved).to.equal(false));"
-            ]
-          }
-        }
-      ]
-    },
-    {
-      "name": "3. Quota — GET /api/v1/usage",
+      "name": "2. Quota — GET /api/v1/usage",
       "request": {
         "method": "GET",
         "header": [
@@ -487,7 +430,7 @@
       ]
     },
     {
-      "name": "4. Poll status — GET /api/v1/check/status/{reportId}",
+      "name": "3. Poll status — GET /api/v1/check/status/{reportId}",
       "request": {
         "method": "GET",
         "header": [
@@ -514,7 +457,7 @@
       "response": []
     },
     {
-      "name": "5. Retrieve report — GET /api/reports/{id}",
+      "name": "4. Retrieve report — GET /api/reports/{id}",
       "request": {
         "method": "GET",
         "header": [
@@ -539,7 +482,7 @@
       "response": []
     },
     {
-      "name": "6. GET /api/v1/check/{address}",
+      "name": "5. GET /api/v1/check/{address}",
       "request": {
         "method": "GET",
         "header": [
@@ -565,7 +508,7 @@
       "response": []
     },
     {
-      "name": "7. POST /api/v1/check/deep",
+      "name": "6. POST /api/v1/check/deep",
       "request": {
         "method": "POST",
         "header": [
@@ -599,7 +542,7 @@
       "response": []
     },
     {
-      "name": "8. POST /api/v1/token/check",
+      "name": "7. POST /api/v1/token/check",
       "request": {
         "method": "POST",
         "header": [
@@ -633,7 +576,7 @@
       "response": []
     },
     {
-      "name": "9. POST /api/v1/token/check/stream",
+      "name": "8. POST /api/v1/token/check/stream",
       "request": {
         "method": "POST",
         "header": [
@@ -668,7 +611,7 @@
       "response": []
     },
     {
-      "name": "10. POST /api/v1/block/analyze",
+      "name": "9. POST /api/v1/block/analyze",
       "request": {
         "method": "POST",
         "header": [
@@ -697,12 +640,12 @@
           "mode": "raw",
           "raw": "{\n  \"blockNumber\": 21000123,\n  \"network\": \"{{fixture_network}}\"\n}\n"
         },
-        "description": "Deterministic fixture MEV result. Post blockNumber 735735 for the empty-block state."
+        "description": "Deterministic fixture MEV result — the analytical values are SYNTHETIC. Post blockNumber 735735 for the empty-block state. A successful call also creates or reuses an EPHEMERAL sandbox block report: the returned `reportId` is retrievable via GET /api/v1/block/reports/{id} and appears in GET /api/v1/block/reports. Re-posting the same network and block while it is live returns the SAME id with `cached: true` and does NOT extend its life, and reading it does not either. The report expires 24h after it was created, or 24h after the last successful RENAME through POST /api/v1/block/reports, which is a mutation and does refresh the clock. No real billing occurs — no credits, quota or usage."
       },
       "response": []
     },
     {
-      "name": "11. POST /api/v1/multichain/scan",
+      "name": "10. POST /api/v1/multichain/scan",
       "request": {
         "method": "POST",
         "header": [
@@ -731,12 +674,12 @@
           "mode": "raw",
           "raw": "{\n  \"address\": \"{{fixture_address}}\"\n}\n"
         },
-        "description": "Deterministic fixture multi-chain summary."
+        "description": "Deterministic fixture multi-chain summary — the analytical values are SYNTHETIC. A successful call also saves an EPHEMERAL sandbox multichain report: the returned `reportId` is retrievable via GET /api/v1/multichain/reports/{id} and appears in GET /api/v1/multichain/reports. Re-scanning the same address within 5 minutes returns the SAME id with `cached: true` and does not extend the report's life; after that window a scan saves a NEW report while the earlier one stays retrievable until its own 24h expiry. No real billing occurs — no credits, quota or usage."
       },
       "response": []
     },
     {
-      "name": "12. POST /api/v1/multichain/analyze",
+      "name": "11. POST /api/v1/multichain/analyze",
       "request": {
         "method": "POST",
         "header": [
@@ -784,7 +727,7 @@
       "response": []
     },
     {
-      "name": "13. GET /api/v1/multichain/analyze/{reportId}",
+      "name": "12. GET /api/v1/multichain/analyze/{reportId}",
       "request": {
         "method": "GET",
         "header": [
@@ -811,7 +754,7 @@
       "response": []
     },
     {
-      "name": "14. POST /api/graph/expand",
+      "name": "13. POST /api/graph/expand",
       "request": {
         "method": "POST",
         "header": [
@@ -839,12 +782,12 @@
           "mode": "raw",
           "raw": "{\n  \"address\": \"{{fixture_address}}\",\n  \"network\": \"{{fixture_network}}\"\n}\n"
         },
-        "description": "Bounded sandbox graph, served by the same primitive as /api/v1/sandbox/graph/expand."
+        "description": "Bounded sandbox graph: real address and network, depth 1, recent activity only, capped nodes/edges, no billing. The SAME request works on a paid key — the credential selects the execution, not the path."
       },
       "response": []
     },
     {
-      "name": "15. POST /api/notifications/test",
+      "name": "14. POST /api/notifications/test",
       "request": {
         "method": "POST",
         "header": [
@@ -877,7 +820,7 @@
       "response": []
     },
     {
-      "name": "16. POST /api/labels",
+      "name": "15. POST /api/labels",
       "request": {
         "method": "POST",
         "header": [
@@ -923,7 +866,7 @@
       "response": []
     },
     {
-      "name": "17. GET /api/labels",
+      "name": "16. GET /api/labels",
       "request": {
         "method": "GET",
         "header": [
@@ -947,7 +890,7 @@
       "response": []
     },
     {
-      "name": "18. PATCH /api/labels/{id}",
+      "name": "17. PATCH /api/labels/{id}",
       "request": {
         "method": "PATCH",
         "header": [
@@ -980,7 +923,7 @@
       "response": []
     },
     {
-      "name": "19. POST /api/labels/import",
+      "name": "18. POST /api/labels/import",
       "request": {
         "method": "POST",
         "header": [
@@ -1013,7 +956,7 @@
       "response": []
     },
     {
-      "name": "20. GET /api/labels/export",
+      "name": "19. GET /api/labels/export",
       "request": {
         "method": "GET",
         "header": [
@@ -1038,7 +981,7 @@
       "response": []
     },
     {
-      "name": "21. DELETE /api/labels/{id}",
+      "name": "20. DELETE /api/labels/{id}",
       "request": {
         "method": "DELETE",
         "header": [
@@ -1063,914 +1006,7 @@
       "response": []
     },
     {
-      "name": "22. GET /api/v1/webhook/deliveries — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          }
-        ],
-        "url": {
-          "raw": "{{base_url}}/api/v1/webhook/deliveries",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "v1",
-            "webhook",
-            "deliveries"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Webhook delivery history is an audit trail of real outbound deliveries. A sandbox key configures no webhook and the sandbox sends none, so there is no history to serve and an empty page would misrepresent a working integration."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
-              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "23. POST /api/v1/token/reports — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          },
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"address\": \"{{sample_token_address}}\",\n  \"network\": \"eth\",\n  \"reportData\": {}\n}"
-        },
-        "url": {
-          "raw": "{{base_url}}/api/v1/token/reports",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "v1",
-            "token",
-            "reports"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Saving a token report writes a durable paid artifact and a credit transaction."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
-              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "24. GET /api/v1/token/reports — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          }
-        ],
-        "url": {
-          "raw": "{{base_url}}/api/v1/token/reports",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "v1",
-            "token",
-            "reports"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Lists durable paid artifacts; a sandbox compute call persists nothing."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
-              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "25. POST /api/v1/block/reports — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          },
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"blockNumber\": {{sample_block}},\n  \"network\": \"eth\",\n  \"reportData\": {}\n}"
-        },
-        "url": {
-          "raw": "{{base_url}}/api/v1/block/reports",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "v1",
-            "block",
-            "reports"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Saving a block report writes a durable paid artifact."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
-              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "26. GET /api/v1/block/reports — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          }
-        ],
-        "url": {
-          "raw": "{{base_url}}/api/v1/block/reports",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "v1",
-            "block",
-            "reports"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Lists durable paid artifacts; a sandbox compute call persists nothing."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
-              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "27. GET /api/v1/block/reports/{id} — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          }
-        ],
-        "url": {
-          "raw": "{{base_url}}/api/v1/block/reports/{{sample_report_id}}",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "v1",
-            "block",
-            "reports",
-            "{{sample_report_id}}"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Retrieves a durable paid artifact by id."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
-              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "28. POST /api/v1/multichain/reports — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          },
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"reportData\": {}\n}"
-        },
-        "url": {
-          "raw": "{{base_url}}/api/v1/multichain/reports",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "v1",
-            "multichain",
-            "reports"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Saving a multichain report writes a durable paid artifact."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
-              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "29. GET /api/v1/multichain/reports — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          }
-        ],
-        "url": {
-          "raw": "{{base_url}}/api/v1/multichain/reports",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "v1",
-            "multichain",
-            "reports"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Lists durable paid artifacts; a sandbox compute call persists nothing."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
-              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "30. GET /api/v1/multichain/reports/{id} — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          }
-        ],
-        "url": {
-          "raw": "{{base_url}}/api/v1/multichain/reports/{{sample_report_id}}",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "v1",
-            "multichain",
-            "reports",
-            "{{sample_report_id}}"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Retrieves a durable paid artifact by id."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
-              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "31. POST /api/investigate — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          },
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          },
-          {
-            "key": "Accept",
-            "value": "text/event-stream"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"message\": \"Summarize suspicious activity patterns for {{sample_address}}.\"\n}"
-        },
-        "url": {
-          "raw": "{{base_url}}/api/investigate",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "investigate"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. An investigation streams from a real LLM call, consumes AI credits and persists an investigation row. None of that is simulated for sandbox keys."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
-              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "32. GET /api/investigations — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          }
-        ],
-        "url": {
-          "raw": "{{base_url}}/api/investigations",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "investigations"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Lists persisted investigations."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
-              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "33. GET /api/investigations/{id} — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          }
-        ],
-        "url": {
-          "raw": "{{base_url}}/api/investigations/{{sample_investigation_id}}",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "investigations",
-            "{{sample_investigation_id}}"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Retrieves one persisted investigation."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
-              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "34. DELETE /api/investigations/{id} — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "DELETE",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          }
-        ],
-        "url": {
-          "raw": "{{base_url}}/api/investigations/{{sample_investigation_id}}",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "investigations",
-            "{{sample_investigation_id}}"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: unsupported` and `upgrade_required: false`. That `reason` is this family's long-standing answer and is NOT a claim that the path is unknown — the operation is real and available on a paid key; see the paid tier. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Deletes one persisted investigation."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is unsupported', () => pm.expect(e.reason).to.eql('unsupported'));",
-              "pm.test('upgrade_required is false', () => pm.expect(e.upgrade_required).to.eql(false));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "35. GET /api/watchlist — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          }
-        ],
-        "url": {
-          "raw": "{{base_url}}/api/watchlist",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "watchlist"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Watchlist entries are monitored by a real scheduled job that can raise alerts and send notifications, so nothing a sandbox key creates may enter it."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
-              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "36. POST /api/watchlist — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          },
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\",\n  \"label\": \"Watched via Postman\",\n  \"notify_email\": 1\n}"
-        },
-        "url": {
-          "raw": "{{base_url}}/api/watchlist",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "watchlist"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Adding an entry enlists an address with a real scheduled monitor. Paid also answers 403 here when the plan has no watchlist allowance — that is a PLAN limit and is a different thing from the sandbox refusal, which applies to every sandbox key."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
-              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "37. PATCH /api/watchlist/{id} — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "PATCH",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          },
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"label\": \"Updated label\",\n  \"notify_email\": 0,\n  \"notify_telegram\": 1\n}"
-        },
-        "url": {
-          "raw": "{{base_url}}/api/watchlist/{{sample_watchlist_id}}",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "watchlist",
-            "{{sample_watchlist_id}}"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Mutates a monitored entry."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
-              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "38. DELETE /api/watchlist/{id} — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "DELETE",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          }
-        ],
-        "url": {
-          "raw": "{{base_url}}/api/watchlist/{{sample_watchlist_id}}",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "watchlist",
-            "{{sample_watchlist_id}}"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Removes a monitored entry."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
-              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "39. GET /api/watchlist/{id}/alerts — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          }
-        ],
-        "url": {
-          "raw": "{{base_url}}/api/watchlist/{{sample_watchlist_id}}/alerts",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "watchlist",
-            "{{sample_watchlist_id}}",
-            "alerts"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Alerts are produced by the real monitor against real on-chain activity."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
-              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "40. GET /api/alerts — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          }
-        ],
-        "url": {
-          "raw": "{{base_url}}/api/alerts",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "alerts"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Alerts are produced by the real monitor against real on-chain activity."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
-              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "41. GET /api/notifications/settings — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          }
-        ],
-        "url": {
-          "raw": "{{base_url}}/api/notifications/settings",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "notifications",
-            "settings"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Reading notification settings CREATES the settings row when none exists, so even the read is a write to paid state."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
-              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "42. PATCH /api/notifications/settings — paid only (403 with a sandbox key)",
-      "request": {
-        "method": "PATCH",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{sandbox_api_key}}"
-          },
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"email_enabled\": 1,\n  \"webhook_url\": \"\",\n  \"webhook_enabled\": 0\n}"
-        },
-        "url": {
-          "raw": "{{base_url}}/api/notifications/settings",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "notifications",
-            "settings"
-          ]
-        },
-        "description": "NOT EXECUTABLE WITH A SANDBOX KEY. An `ocr_test_*` credential receives **403 `sandbox_not_supported`** with `reason: paid_only` and `upgrade_required: true`. It never reaches this handler. The operation is documented here — same path, same request model, same response models — so a client generated from the sandbox contract already has the method and the types it will need on an `ocr_live_*` key. Writes the notification settings a real delivery pipeline reads."
-      },
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('sandbox key is refused with 403', () => pm.response.to.have.status(403));",
-              "const e = pm.response.json().error;",
-              "pm.test('code is sandbox_not_supported', () => pm.expect(e.code).to.eql('sandbox_not_supported'));",
-              "pm.test('reason is paid_only', () => pm.expect(e.reason).to.eql('paid_only'));",
-              "pm.test('upgrade_required is true', () => pm.expect(e.upgrade_required).to.eql(true));"
-            ]
-          }
-        }
-      ],
-      "response": []
-    },
-    {
-      "name": "43. POST /api/notifications/telegram/connect — paid only (403 with a sandbox key)",
+      "name": "21. POST /api/notifications/telegram/connect — paid only (403 with a sandbox key)",
       "request": {
         "method": "POST",
         "header": [
@@ -2019,7 +1055,7 @@
       "response": []
     },
     {
-      "name": "44. POST /api/notifications/telegram/disconnect — paid only (403 with a sandbox key)",
+      "name": "22. POST /api/notifications/telegram/disconnect — paid only (403 with a sandbox key)",
       "request": {
         "method": "POST",
         "header": [
@@ -2057,6 +1093,645 @@
           }
         }
       ],
+      "response": []
+    },
+    {
+      "name": "23. POST /api/v1/token/reports — sandbox saved report (simulated)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{sample_token_address}}\",\n  \"network\": \"eth\",\n  \"reportData\": {}\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/token/reports",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "token",
+            "reports"
+          ]
+        },
+        "description": "Sandbox: SIMULATED. Saves the report under the `reportPublicId` YOU supply — the same idempotency key paid uses — as an owner-scoped sandbox object, and derives `tokenSymbol` and `securityScore` from your `reportData` exactly as paid does. Re-posting the same `reportPublicId` returns the ORIGINAL stored values with `duplicate: true` whatever the retry body says, because paid resolves the duplicate before it looks at the new body. A non-actionable `honeypot.status` answers the paid 200 envelope with `id: null` and stores nothing. `charged: true` on the 201 mirrors the successful paid save branch; the sandbox deducts no real credits, quota, usage allowance or billing state. Sandbox reports are EPHEMERAL: each expires 24 hours after it was created, and reading does not extend that. Your paid saved reports are never read or written."
+      },
+      "response": []
+    },
+    {
+      "name": "24. GET /api/v1/token/reports — sandbox saved report (simulated)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/token/reports",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "token",
+            "reports"
+          ]
+        },
+        "description": "Sandbox: SIMULATED. Lists the token reports YOU saved with this sandbox key, with the paid row shape, the paid pagination (`limit` default 20 / max 100, `offset`) and `total` as your own live count. `id` is the integer id, as on paid. Your paid reports never appear here."
+      },
+      "response": []
+    },
+    {
+      "name": "25. POST /api/v1/block/reports — sandbox saved report (simulated)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"blockNumber\": {{sample_block}},\n  \"network\": \"eth\",\n  \"reportData\": {}\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/block/reports",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "block",
+            "reports"
+          ]
+        },
+        "description": "Sandbox: SIMULATED. This is NOT a create on either tier — `POST /api/v1/block/analyze` is what saves a block report, and this resolves one that already exists, optionally renaming it. Supply `reportPublicId`/`reportId` to address it directly, or `blockNumber` + `network` to find the one your last analysis of that subject saved. With no such report — including one that has expired — it answers 410 `LEGACY_CACHE_NO_SAVE`, the code paid uses when there is nothing left to save. Owner-scoped and 24h ephemeral; no paid table is touched."
+      },
+      "response": []
+    },
+    {
+      "name": "26. GET /api/v1/block/reports — sandbox saved report (simulated)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/block/reports",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "block",
+            "reports"
+          ]
+        },
+        "description": "Sandbox: SIMULATED. Lists the block reports YOUR analyses saved with this sandbox key, with the paid row shape and pagination. The MEV counts come from the analysis `summary` exactly as paid derives them, so a fixture carrying no `summary` reports zeroes rather than recounting its arrays. Your paid reports never appear here."
+      },
+      "response": []
+    },
+    {
+      "name": "27. GET /api/v1/block/reports/{id} — sandbox saved report (simulated)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/block/reports/{{sample_report_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "block",
+            "reports",
+            "{{sample_report_id}}"
+          ]
+        },
+        "description": "Sandbox: SIMULATED. Accepts either the UUID or the legacy integer id, split exactly as paid splits them. An id that is unknown, not yours, from another object family, or expired all answer one identical 404 — the response can never be used to prove an object exists."
+      },
+      "response": []
+    },
+    {
+      "name": "28. POST /api/v1/multichain/reports — sandbox saved report (simulated)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"reportData\": {}\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/multichain/reports",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "multichain",
+            "reports"
+          ]
+        },
+        "description": "Sandbox: SIMULATED. This is NOT a create on either tier — `POST /api/v1/multichain/scan` is what saves a multichain report, and this resolves one that already exists, optionally renaming it. Supply `reportPublicId`/`reportId` to address it directly, or `address` to resolve the report your last scan of that address saved. The address form only works while that scan's 5-minute correlation window is still open: once it lapses this answers 410 `LEGACY_CACHE_NO_SAVE` EVEN IF the report itself is still retrievable by its id, because paid does not reconstruct an expired cache from stored reports either. A successful rename refreshes the report's 24-hour expiry. Owner-scoped; no paid table is touched."
+      },
+      "response": []
+    },
+    {
+      "name": "29. GET /api/v1/multichain/reports — sandbox saved report (simulated)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/multichain/reports",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "multichain",
+            "reports"
+          ]
+        },
+        "description": "Sandbox: SIMULATED. Lists the multichain reports YOUR scans saved with this sandbox key, with the paid row shape and pagination. The SAME address may legitimately appear more than once: each scan outside the 5-minute correlation window saves a new report, and the earlier one remains listed until its own 24-hour expiry. Cache state does not affect what is listed, and reading never extends a report's life. Your paid reports never appear here."
+      },
+      "response": []
+    },
+    {
+      "name": "30. GET /api/v1/multichain/reports/{id} — sandbox saved report (simulated)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/multichain/reports/{{sample_report_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "multichain",
+            "reports",
+            "{{sample_report_id}}"
+          ]
+        },
+        "description": "Sandbox: SIMULATED. Accepts either the UUID or the legacy integer id, split exactly as paid splits them, with no cache lookup. An id that is unknown, not yours, from another object family, or expired all answer one identical 404."
+      },
+      "response": []
+    },
+    {
+      "name": "31. GET /api/watchlist — sandbox watchlist (simulated)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/watchlist",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "watchlist"
+          ]
+        },
+        "description": "List your monitored addresses. On the paid API these are the entries a scheduled job polls; on sandbox nothing polls them.\n\nSandbox: SIMULATED. Lists YOUR ACCOUNT's ACTIVE watchlist items — these are owned by the account, so every sandbox key you hold on it sees and mutates the same ones — with the paid row shape (snake_case, integer flags), the paid pagination (`page` default 1, `limit` default 20 / max 100) and `alert_count` for each item. A removed item is soft-deleted and disappears from here exactly as on paid, while staying readable through its alert history. NOTHING IS MONITORED: no scheduled job sees sandbox items, no provider is polled, and no email, Telegram message or webhook is ever sent. Items are EPHEMERAL — each expires 24 hours after its last change — and your paid watchlist is never read or written."
+      },
+      "response": []
+    },
+    {
+      "name": "32. POST /api/watchlist — sandbox watchlist (simulated)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\",\n  \"label\": \"Watched via Postman\",\n  \"notify_email\": 1\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/watchlist",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "watchlist"
+          ]
+        },
+        "description": "Monitor an address for new transactions. ON THE PAID API the address is polled about every five minutes and alerts are delivered through the channels you enable here. ON SANDBOX nothing is polled and nothing is delivered — see below.\n\nSandbox: SIMULATED. Validates exactly as paid does, in the same order: the address/network family check first (422), then the monitored-network gate (400 `WATCHLIST_NETWORK_UNSUPPORTED`), then the limit. It is an UPSERT on (account, address, network) and answers 201 either way: re-posting an address you already watch REPLACES `label`, `threshold_value`, `threshold_max`, `track_all` and the three `notify_*` flags — an omitted field becomes its default, it is not merged — keeps the same `id` and `created_at`, preserves the monitoring columns, and re-activates a removed item together with its alert history. The sandbox limit is 25 ACTIVE items PER ACCOUNT (and 50 including removed ones, which expire 24h after their last change), answered as the same 403 paid uses for its plan limit; it is a SANDBOX EXECUTION LIMIT, not a plan quota, and like paid it applies before the subject is written, so at the limit even re-posting an item you already watch is refused. The limits are PER ACCOUNT, not per key. `is_contract` and `deployer_address` are NOT detected — no provider is called — so they are 0 and null except for one documented fixture address that returns the contract shape. Creating an item seeds deterministic SIMULATED alerts so the alert endpoints are exercisable; no chain was observed and nothing was delivered."
+      },
+      "response": []
+    },
+    {
+      "name": "33. PATCH /api/watchlist/{id} — sandbox watchlist (simulated)",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"label\": \"Updated label\",\n  \"notify_email\": 0,\n  \"notify_telegram\": 1\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/watchlist/{{sample_watchlist_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "watchlist",
+            "{{sample_watchlist_id}}"
+          ]
+        },
+        "description": "Update one entry.\n\nSandbox: SIMULATED. Paid's partial-update semantics field for field: an omitted field is left alone, an explicit `false` on a `notify_*` flag persists as `0`, and an empty-string `label` really does set the label to the empty string. The `notify_*` flags are CONTRACT DATA ONLY on this tier — setting all three arms nothing, because no delivery path exists for sandbox state. A successful update refreshes the item's 24-hour expiry. An id that is unknown, not yours, from another object family, or expired all answer one identical 404."
+      },
+      "response": []
+    },
+    {
+      "name": "34. DELETE /api/watchlist/{id} — sandbox watchlist (simulated)",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/watchlist/{{sample_watchlist_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "watchlist",
+            "{{sample_watchlist_id}}"
+          ]
+        },
+        "description": "Remove one entry.\n\nSandbox: SIMULATED. A SOFT delete, as on paid: the item stops being listed, its alert history stays readable through `GET /api/watchlist/{id}/alerts`, and re-posting the same address and network restores it with the SAME id and that history. Also as on paid, this answers 200 for any id — including one you never created or that belongs to someone else — and it never touches anything but your own item, so the response cannot be used to find out whether an id exists. A successful delete refreshes the item's 24-hour expiry."
+      },
+      "response": []
+    },
+    {
+      "name": "35. GET /api/watchlist/{id}/alerts — sandbox watchlist (simulated)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/watchlist/{{sample_watchlist_id}}/alerts",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "watchlist",
+            "{{sample_watchlist_id}}",
+            "alerts"
+          ]
+        },
+        "description": "Alert history for one entry. On the paid API these rows are produced by the monitor from real on-chain activity; on sandbox they are synthetic.\n\nSandbox: SIMULATED. Returns the deterministic SIMULATED alerts attached to one of your account's items, with the paid row shape and the paid pagination (`page` default 1, `limit` default 20 / max 100). `details` is a JSON **STRING**, as on paid — parse it client-side; it carries the same transaction keys plus `\"simulated\": true`. The `notified_*` flags are always `0` because nothing was delivered: NO monitoring ran, no provider was polled and no address was observed, and the `tx_hash` values are synthetic. A removed item keeps its readable history, as on paid. An id that is unknown, not yours, from another family, or expired all answer one identical 404, and reading never extends an item's life."
+      },
+      "response": []
+    },
+    {
+      "name": "36. GET /api/alerts — sandbox watchlist (simulated)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/alerts",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "alerts"
+          ]
+        },
+        "description": "The account-wide alert feed. On the paid API these rows are produced by the monitor from real on-chain activity; on sandbox they are synthetic.\n\nSandbox: SIMULATED. The account-wide feed over YOUR ACCOUNT's sandbox items' simulated alerts, with the paid joined fields (`address`, `network`, `label`), the paid default page size of 50 and max 100, newest first. Removed items still contribute their history, as on paid. These alerts were generated when you created the items, not by monitoring: no scheduled job, no provider call and no notification of any kind is involved on this tier. Your paid alerts never appear here."
+      },
+      "response": []
+    },
+    {
+      "name": "37. GET /api/notifications/settings — sandbox notifications (simulated)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/notifications/settings",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "notifications",
+            "settings"
+          ]
+        },
+        "description": "Read your notification settings.\n\nSandbox: SIMULATED. These are REAL settings, stored and read back for real, owned by YOUR ACCOUNT — every sandbox key on the account reads and writes the same ones. As on paid, this operation is NOT purely a read: the first call CREATES the default settings (email enabled, everything else off) and returns them, so the first response you see matches paid's. What the values do NOT do on this tier is arm anything: there is no sandbox monitoring job, and no email, Telegram message or webhook request is EVER sent whatever you enable here. Your paid notification settings are never read or written. The sandbox settings are EPHEMERAL — they expire 24 hours after the last change, and a read does not extend that; once expired, the next call creates the defaults again."
+      },
+      "response": []
+    },
+    {
+      "name": "38. PATCH /api/notifications/settings — sandbox notifications (simulated)",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email_enabled\": 1,\n  \"webhook_url\": \"\",\n  \"webhook_enabled\": 0\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/notifications/settings",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "notifications",
+            "settings"
+          ]
+        },
+        "description": "Update your notification settings.\n\nSandbox: SIMULATED, with paid's partial-update semantics field for field: an omitted field keeps its stored value, an explicit `false` persists as `0`, and a `PATCH` before any `GET` creates the defaults first and then applies your change. The response is paid's explicit column projection, and `webhook_secret` is NOT in it — paid withholds it too; a secret you send is kept only so a later partial update behaves as on paid, is never returned, and is never used to sign or send anything. Everything you set here is CONTRACT DATA: enabling email, Telegram or webhook delivery on a sandbox credential binds no chat, queues no delivery and sends no request. A successful update refreshes the settings' 24-hour expiry."
+      },
+      "response": []
+    },
+    {
+      "name": "39. GET /api/v1/webhook/deliveries — sandbox notifications (fixture)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/webhook/deliveries",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "webhook",
+            "deliveries"
+          ]
+        },
+        "description": "Webhook delivery audit, newest first.\n\nSandbox: FIXTURE. This returns a COMMITTED SET OF SYNTHETIC DELIVERY RECORDS for client integration testing. THEY ARE NOT EVIDENCE THAT ANY WEBHOOK REQUEST WAS SENT: the sandbox delivers nothing, and that is exactly why this is a fixture rather than stored sandbox history — a saved delivery lifecycle would claim an outbound attempt that never happened. The same rows are returned for every sandbox credential and they never change. The QUERY contract is paid's: optional `status` from the same five values with the same 422 on anything else, `limit` default 20 / min 1 / max 100, opaque `cursor` with the same 422 on a malformed one, `id`-descending order and the same `next_cursor` handshake, and the fixture covers a delivered record, a scheduled retry, a terminal failure, an in-flight attempt and a disabled endpoint so every branch is exercisable. Privacy matches paid exactly: `endpoint_host` only — no full URL, no secret, no request body. Your paid delivery history is never read."
+      },
+      "response": []
+    },
+    {
+      "name": "40. POST /api/investigate — sandbox investigation (simulated)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "text/event-stream"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"message\": \"Summarize suspicious activity patterns for {{sample_address}}.\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/investigate",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "investigate"
+          ]
+        },
+        "description": "Send a message to the AI investigator. Server-Sent Events.\n\nSandbox: SIMULATED. **NO LANGUAGE MODEL IS CALLED.** No tool runs, no blockchain data is read, no AI credit or monthly investigation allowance is consumed, and your own `byoKey` is never used or stored. The assistant reply is DETERMINISTIC SYNTHETIC TEXT that says so in its own body, so it cannot be mistaken for a finding — nothing in it is an analysis of any address, token, block or report.\n\nWhat IS real is the conversation lifecycle, which is the whole point of the tier: the stream is a genuine `text/event-stream` in the paid event vocabulary — `investigation_id`, `thinking`, `text`, `done`, each frame `data: <json>` — the id it gives you resolves through GET /api/investigations/{id} with the stored history, and passing that id back as `investigationId` CONTINUES the same investigation, appending the turn and advancing `message_count` exactly as paid does. Investigations are owned by your ACCOUNT, so every sandbox key you hold sees and continues the same ones.\n\nValidation is paid's, in paid's order and as REAL HTTP statuses before any stream exists: malformed or non-object JSON and a missing, blank or over-5000-character message answer 400; two artifact selectors answer 400 `AMBIGUOUS_REF`; a present-but-malformed `rwaRef` answers 400 `MALFORMED_REF`; an unknown or unowned `investigationId` answers 404. `reportId`, `tokenRef` and `blockRef` are recorded as the investigation's family and reference without reading any paid report. The Tokenized-Asset family has no sandbox artifact store, so a `rwaRef` resolves as it does for an artifact you do not own.\n\nLAUNCHING FROM A REPORT RESUMES, as on paid. If you post `reportId` with no `investigationId` and a non-archived investigation for that same report already has history, the stream is a single `existing_investigation` event carrying its id and NOTHING is appended — your client should follow that id rather than starting over. An archived one is not resumed, so a fresh launch creates a new investigation. A `tokenRef` launch also resumes the existing investigation but continues it as another turn, and a launch with no reference always creates a new one.\n\nYOUR ACCOUNT may hold 25 stored investigations, ARCHIVED ONES INCLUDED — archiving does not free a slot, only expiry does — and each investigation accepts 20 messages before its status becomes `limit_reached`. Both are sandbox execution limits, not plan quotas. Investigations are EPHEMERAL: each expires 24 hours after its last change, and no paid investigation row is ever created, read or written."
+      },
+      "response": []
+    },
+    {
+      "name": "41. GET /api/investigations — sandbox investigation (simulated)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/investigations",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "investigations"
+          ]
+        },
+        "description": "List your investigations, newest-updated first.\n\nSandbox: SIMULATED. Your ACCOUNT's own sandbox investigations, with the paid row shape, the paid pagination (`limit` default 20 / max 50, `offset`) and a `total` computed from the same visible set as the page. Archived investigations are hidden here and still readable by id, as on paid. The joined report, block, token and Tokenized-Asset columns are `null`: a sandbox investigation is linked to no paid artifact, which is also what paid returns when a linked artifact is gone. Your paid investigations never appear here."
+      },
+      "response": []
+    },
+    {
+      "name": "42. GET /api/investigations/{id} — sandbox investigation (simulated)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/investigations/{{sample_investigation_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "investigations",
+            "{{sample_investigation_id}}"
+          ]
+        },
+        "description": "Retrieve one investigation with its full message history.\n\nSandbox: SIMULATED. Returns the stored sandbox investigation in the paid detail shape, including every message of the conversation — your messages as you sent them and the synthetic replies, which are labelled as such in their own text. An ARCHIVED investigation is still readable here and reports `status: \"archived\"`, as on paid. An id that is unknown, not yours, from another object family, or expired all answer one identical 404, so the response can never be used to prove an investigation exists. The report-context fields are `null` because there is no linked paid report whose access could be downgraded."
+      },
+      "response": []
+    },
+    {
+      "name": "43. DELETE /api/investigations/{id} — sandbox investigation (simulated)",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{sandbox_api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/investigations/{{sample_investigation_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "investigations",
+            "{{sample_investigation_id}}"
+          ]
+        },
+        "description": "Archive one investigation.\n\nSandbox: SIMULATED. A SOFT archive, as on paid: the investigation stops being listed and stays readable by id with `status: \"archived\"`. Sending another message with its `investigationId` RE-ACTIVATES it and appends to its history, which is paid's own behaviour — neither tier treats an archive as a terminal state. Also as on paid, a repeat archive, an unknown id and an id that is not yours all answer 404 — this route's 404 is real, unlike the watchlist one. A successful archive refreshes the investigation's 24-hour expiry."
+      },
+      "response": []
+    },
+    {
+      "name": "44. GET /api/share/{token} — public share link (no auth)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/share/{{sample_share_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "share",
+            "{{sample_share_token}}"
+          ]
+        },
+        "description": "Intentionally UNAUTHENTICATED: the 64-hex share token in the path IS the credential, so no key is sent on either tier and there is no sandbox-vs-paid execution difference to observe. Set `sample_share_token` to a token the report owner gave you.",
+        "auth": {
+          "type": "noauth"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "45. GET /api/share/{token}/graph — public share link (no auth)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/share/{{sample_share_token}}/graph",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "share",
+            "{{sample_share_token}}",
+            "graph"
+          ]
+        },
+        "description": "Intentionally UNAUTHENTICATED: the 64-hex share token in the path IS the credential, so no key is sent on either tier and there is no sandbox-vs-paid execution difference to observe. Set `sample_share_token` to a token the report owner gave you.",
+        "auth": {
+          "type": "noauth"
+        }
+      },
       "response": []
     }
   ]

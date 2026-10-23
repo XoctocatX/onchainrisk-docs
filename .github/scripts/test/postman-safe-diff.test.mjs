@@ -368,9 +368,17 @@ describe('SAFE_DIFF_DOES_NOT_CHANGE_HASH', () => {
    * Every one of these was re-derived from the committed collections rather than copied out of a
    * CI failure log — the independent derivation is recorded in the PR.
    *
+   * The sandbox value then moved a third time, and for the plainest reason of all: the sandbox
+   * collection reached FULL PARITY with the paid surface. #748 finished mirroring the public
+   * contract — saved reports, multichain reports, watchlist and alerts, notification settings and
+   * webhook deliveries, and AI investigations — and retired the sandbox-only graph operation, so
+   * the collection went from 44 requests to 45, exactly the paid count. Both collections now
+   * describe the same 45 operations and differ only in execution, which is the whole point of the
+   * sandbox tier.
+   *
    * Superseded paid values: 9ccc9a57… (46-request generation) and b5d54c4f… (45 requests, event
-   * still nested under `request`). Superseded sandbox value: b1a89ffc… (21 requests). None is
-   * reachable from the current files.
+   * still nested under `request`). Superseded sandbox values: b1a89ffc… (21 requests) and
+   * 379e0798… (44 requests, before the #748 parity set). None is reachable from the current files.
    *
    * The event PLACEMENT itself is enforced upstream, in the serving repository's
    * `validate-public-contract` gate, which is where it belongs: the fix was applied downstream
@@ -383,7 +391,7 @@ describe('SAFE_DIFF_DOES_NOT_CHANGE_HASH', () => {
   test('both real collections hash to their reviewed canonical values', () => {
     const expected = {
       'paid-collection.json': 'b7dde0fef3ae6de2ca060001ead1492576a03e537ba9ae4ffdd1a3246449bbfc',
-      'onchainrisk_sandbox_api_collection.json': '379e07985aa0e91a2fe9af30d31d63c20e64e3deae252d1564634896a870d303',
+      'onchainrisk_sandbox_api_collection.json': 'ac87929084f1802f19a5f2a18ae49f9a4c3b5d7f74f8b113c50ab29d71f534f1',
     };
     for (const [file, hash] of Object.entries(expected)) {
       assert.equal(contentHash(readLocal(file)), hash, `${file} hash must be byte-for-byte unchanged`);
@@ -403,7 +411,7 @@ describe('SAFE_DIFF_DOES_NOT_CHANGE_HASH', () => {
       return out;
     };
     assert.equal(leaves(readLocal('paid-collection.json')).length, 45, 'paid requests');
-    assert.equal(leaves(readLocal('onchainrisk_sandbox_api_collection.json')).length, 44, 'sandbox requests');
+    assert.equal(leaves(readLocal('onchainrisk_sandbox_api_collection.json')).length, 45, 'sandbox requests');
   });
 
   test('computing a diff does not mutate either input', () => {
