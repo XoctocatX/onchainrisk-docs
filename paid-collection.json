@@ -1172,8 +1172,9 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"address\": \"{{sample_token_address}}\",\n  \"network\": \"eth\",\n  \"reportData\": {}\n}"
+              "raw": "{\n  \"address\": \"{{sample_token_address}}\",\n  \"network\": \"eth\",\n  \"reportData\": {},\n  \"reportPublicId\": \"{{$guid}}\"\n}"
             },
+            "description": "Save a token security report. `reportPublicId` is OPTIONAL and is the idempotency key: this example sends `{{$guid}}`, Postman's per-request UUID, which is the recommended usage \u2014 replace it with a UUID you store yourself and a retry after a timeout answers 200 with `duplicate: true` and `charged: false` instead of saving and charging twice. Omit the field entirely and the server generates one, returning it as `data.id`; that path is not retry-safe. `data.id` is that public UUID, not the integer `id` GET /api/v1/token/reports lists. Send the `reportData` from POST /api/v1/token/check \u2014 the `{}` here keeps the example runnable, and an unusable honeypot block answers 200 with `id: null`, saving and charging nothing.",
             "url": {
               "raw": "{{base_url}}/api/v1/token/reports",
               "host": [
@@ -1456,7 +1457,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"reportData\": {}\n}"
+              "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"name\": \"Renamed multi-chain report\"\n}"
             },
             "url": {
               "raw": "{{base_url}}/api/v1/multichain/reports",
@@ -1667,7 +1668,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\",\n  \"label\": \"Watched via Postman\",\n  \"notify_email\": 1\n}"
+              "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\",\n  \"label\": \"Watched via Postman\",\n  \"threshold_value\": 0.5,\n  \"threshold_max\": 25,\n  \"track_all\": false,\n  \"notify_email\": 1\n}"
             },
             "url": {
               "raw": "{{base_url}}/api/watchlist",
@@ -1711,7 +1712,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"label\": \"Updated label\",\n  \"notify_email\": 0,\n  \"notify_telegram\": 1\n}"
+              "raw": "{\n  \"label\": \"Updated label\",\n  \"notify_email\": 0,\n  \"notify_telegram\": 1,\n  \"is_active\": true\n}"
             },
             "url": {
               "raw": "{{base_url}}/api/watchlist/{{sample_watchlist_id}}",

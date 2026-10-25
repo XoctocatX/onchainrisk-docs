@@ -376,9 +376,21 @@ describe('SAFE_DIFF_DOES_NOT_CHANGE_HASH', () => {
    * describe the same 45 operations and differ only in execution, which is the whole point of the
    * sandbox tier.
    *
-   * Superseded paid values: 9ccc9a57… (46-request generation) and b5d54c4f… (45 requests, event
-   * still nested under `request`). Superseded sandbox values: b1a89ffc… (21 requests) and
-   * 379e0798… (44 requests, before the #748 parity set). None is reachable from the current files.
+   * Both values moved again with the CORE contract-truth sequence that followed #748, and this
+   * time nothing about the collections' SHAPE changed — the request counts stayed 45 and 45. What
+   * changed is published request bodies and example values, from four reviewed CORE slices:
+   * #553 (deterministic `limit`/`offset` validation on the investigations list), #772 (the three
+   * watchlist request properties the runtime had always accepted), #769 (the multichain reports
+   * POST documented as the RESOLVE it is), and #767 (token reports: `reportPublicId` published as
+   * optional, the paid create example now sending `{{$guid}}`, and three provably false sentences
+   * about report identity corrected). Every one of those is an authorized addition or a
+   * documentation repair in the serving repository's own governance ledger.
+   *
+   * Superseded paid values: 9ccc9a57… (46-request generation), b5d54c4f… (45 requests, event
+   * still nested under `request`) and b7dde0fe… (45 requests, before the contract-truth sequence).
+   * Superseded sandbox values: b1a89ffc… (21 requests), 379e0798… (44 requests, before the #748
+   * parity set) and ac879290… (45 requests, before the contract-truth sequence). None is reachable
+   * from the current files.
    *
    * The event PLACEMENT itself is enforced upstream, in the serving repository's
    * `validate-public-contract` gate, which is where it belongs: the fix was applied downstream
@@ -390,8 +402,8 @@ describe('SAFE_DIFF_DOES_NOT_CHANGE_HASH', () => {
    */
   test('both real collections hash to their reviewed canonical values', () => {
     const expected = {
-      'paid-collection.json': 'b7dde0fef3ae6de2ca060001ead1492576a03e537ba9ae4ffdd1a3246449bbfc',
-      'onchainrisk_sandbox_api_collection.json': 'ac87929084f1802f19a5f2a18ae49f9a4c3b5d7f74f8b113c50ab29d71f534f1',
+      'paid-collection.json': '87e422c78d5d2f04782370578a886de928a580a420d97cc760e36634a750f697',
+      'onchainrisk_sandbox_api_collection.json': '2161bf4e925e81714f14fcedbe08ac6a5b6857cc527579fd741f93b54f4d20a8',
     };
     for (const [file, hash] of Object.entries(expected)) {
       assert.equal(contentHash(readLocal(file)), hash, `${file} hash must be byte-for-byte unchanged`);

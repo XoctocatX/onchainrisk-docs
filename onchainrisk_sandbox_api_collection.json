@@ -1111,8 +1111,9 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"address\": \"{{sample_token_address}}\",\n  \"network\": \"eth\",\n  \"reportData\": {}\n}"
+          "raw": "{\n  \"address\": \"{{sample_token_address}}\",\n  \"network\": \"eth\",\n  \"reportData\": {},\n  \"reportPublicId\": \"{{$guid}}\"\n}"
         },
+        "description": "Sandbox: SIMULATED. Saves the report under the `reportPublicId` YOU supply — the same idempotency key paid uses — as an owner-scoped sandbox object, and derives `tokenSymbol` and `securityScore` from your `reportData` exactly as paid does. Re-posting the same `reportPublicId` returns the ORIGINAL stored values with `duplicate: true` whatever the retry body says, because paid resolves the duplicate before it looks at the new body. A non-actionable `honeypot.status` answers the paid 200 envelope with `id: null` and stores nothing. `charged: true` on the 201 mirrors the successful paid save branch; the sandbox deducts no real credits, quota, usage allowance or billing state. Sandbox reports are EPHEMERAL: each expires 24 hours after it was created, and reading does not extend that. Your paid saved reports are never read or written.",
         "url": {
           "raw": "{{base_url}}/api/v1/token/reports",
           "host": [
@@ -1124,8 +1125,7 @@
             "token",
             "reports"
           ]
-        },
-        "description": "Sandbox: SIMULATED. Saves the report under the `reportPublicId` YOU supply — the same idempotency key paid uses — as an owner-scoped sandbox object, and derives `tokenSymbol` and `securityScore` from your `reportData` exactly as paid does. Re-posting the same `reportPublicId` returns the ORIGINAL stored values with `duplicate: true` whatever the retry body says, because paid resolves the duplicate before it looks at the new body. A non-actionable `honeypot.status` answers the paid 200 envelope with `id: null` and stores nothing. `charged: true` on the 201 mirrors the successful paid save branch; the sandbox deducts no real credits, quota, usage allowance or billing state. Sandbox reports are EPHEMERAL: each expires 24 hours after it was created, and reading does not extend that. Your paid saved reports are never read or written."
+        }
       },
       "response": []
     },
@@ -1258,7 +1258,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"reportData\": {}\n}"
+          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"name\": \"Renamed multi-chain report\"\n}"
         },
         "url": {
           "raw": "{{base_url}}/api/v1/multichain/reports",
@@ -1369,7 +1369,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\",\n  \"label\": \"Watched via Postman\",\n  \"notify_email\": 1\n}"
+          "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"eth\",\n  \"label\": \"Watched via Postman\",\n  \"threshold_value\": 0.5,\n  \"threshold_max\": 25,\n  \"track_all\": false,\n  \"notify_email\": 1\n}"
         },
         "url": {
           "raw": "{{base_url}}/api/watchlist",
@@ -1401,7 +1401,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"label\": \"Updated label\",\n  \"notify_email\": 0,\n  \"notify_telegram\": 1\n}"
+          "raw": "{\n  \"label\": \"Updated label\",\n  \"notify_email\": 0,\n  \"notify_telegram\": 1,\n  \"is_active\": true\n}"
         },
         "url": {
           "raw": "{{base_url}}/api/watchlist/{{sample_watchlist_id}}",
