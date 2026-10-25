@@ -46,12 +46,15 @@ const POSTMAN_API = 'https://api.postman.com';
 export const ACTIVATION_VAR = 'POSTMAN_AUTOPUBLISH_ENABLED';
 
 /**
- * The two collections this repository publishes, and the name each target MUST have.
+ * THE THREE TARGETS this repository publishes — ONE collection and TWO environments — and the
+ * name each one MUST have.
  *
  * `expectedName` is a SAFETY ASSERTION, never a lookup: the script will not search Postman for a
- * collection with this name, and will not switch to a different id if the configured one points
- * somewhere else. It exists so that a swapped or mistyped variable fails instead of overwriting
- * an unintended collection.
+ * collection or environment with this name, and will not switch to a different id if the
+ * configured one points somewhere else. It exists so that a swapped or mistyped variable fails
+ * instead of overwriting an unintended target — and with two environments that matters as much
+ * as it did back when there were two collections: publishing the production placeholder over the
+ * sandbox one would hand a sandbox reader a live-key placeholder.
  */
 /**
  * THE THREE CANONICAL TARGETS (#748 cutover).
@@ -149,11 +152,17 @@ const IDENTITY = {
  * Server-generated metadata, normalized for comparison and deliberately NOT echoed back.
  *
  * R4: a current GET returns `createdAt` / `updatedAt` on folders, requests and response examples
- * as well as on the collection. Neither checked-in collection carries them structurally (the
- * four `createdAt` strings in the paid collection are inside response-example BODIES, which is
- * our content), so every ordinary GET differed from the canonical file purely by server
- * timestamps — a false ACTION=UPDATE, and then a post-PUT verification that could never match
- * because the verifying GET added them again.
+ * as well as on the collection. The checked-in collection carries none of them structurally, so
+ * every ordinary GET differed from the canonical file purely by server timestamps — a false
+ * ACTION=UPDATE, and then a post-PUT verification that could never match because the verifying
+ * GET added them again.
+ *
+ * The POSITION matters as much as the key name, and that is why this table is per-position rather
+ * than a flat denylist: back when the paid collection was hand-authored it carried four
+ * `createdAt` strings INSIDE response-example bodies, which is our content and must survive
+ * normalization. The generated collection has no saved examples at all, so it carries none today
+ * — but a flat "delete anything called createdAt" would be wrong the moment one returns, and the
+ * position-aware behaviour is proven on a synthetic collection in the server-shape suite.
  */
 const SERVER_METADATA = {
   collectionInfo: ['owner', 'fork', 'createdAt', 'updatedAt', 'lastUpdatedBy', 'lastRevision'],
@@ -717,9 +726,13 @@ function keyable(arr, field) {
  *
  * The strategy is decided ONCE FOR THE PAIR, by the caller, and applied to both sides. Indexing
  * each side independently produced incoherent output when one side was keyable and the other was
- * not: the paid collection genuinely has two events with `listen: "test"` on one request, so a
- * remote with a single `test` event reported `event[0]`/`event[1]` as ADDED *and*
- * `event[test]` as REMOVED — describing one edit as three unrelated ones.
+ * not — the incident that prompted this: the hand-authored paid collection carried two events
+ * with `listen: "test"` on one request, so a remote with a single `test` event reported
+ * `event[0]`/`event[1]` as ADDED *and* `event[test]` as REMOVED, describing one edit as three
+ * unrelated ones. The generated collection emits exactly one test event per scripted request, so
+ * no published artifact is un-keyable this way today; the pair-wise rule stays because an
+ * un-keyable array is a shape Postman can return at any time, and the safe-diff suite constructs
+ * one rather than relying on a published file to contain it.
  */
 function indexArray(arr, field, semantic) {
   if (semantic) {

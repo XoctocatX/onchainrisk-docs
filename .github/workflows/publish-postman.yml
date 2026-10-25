@@ -21,15 +21,17 @@
 # README, the CHANGELOG, an integration doc or this workflow does not republish anything.
 #
 # REQUIRED REPOSITORY CONFIGURATION (set once, by a maintainer):
-#   secret    POSTMAN_API_KEY                  a Postman API key with update rights on the two
-#                                              collections below, and nothing else
+#   secret    POSTMAN_API_KEY                  a Postman API key with update rights on the three
+#                                              targets below — the canonical collection and the
+#                                              two environments — and nothing else
 #   variable  POSTMAN_COLLECTION_ID            the Postman CLOUD id of "OnChainRisk API"
 #   variable  POSTMAN_PRODUCTION_ENVIRONMENT_ID  the CLOUD id of "OnChainRisk Production"
 #   variable  POSTMAN_SANDBOX_ENVIRONMENT_ID     the CLOUD id of "OnChainRisk Sandbox"
 #   variable  POSTMAN_AUTOPUBLISH_ENABLED      the activation kill switch — see below
 #
-# The `_postman_id` values inside the checked-in files are collection-document identifiers and
-# are NOT cloud ids. The script refuses to guess one.
+# The `_postman_id` in the checked-in collection and the `id` in each checked-in environment are
+# DOCUMENT identifiers, not cloud ids. The script refuses to guess a cloud id, and has no create
+# path for any of the three targets.
 #
 # ACTIVATION. Nothing can be written until POSTMAN_AUTOPUBLISH_ENABLED is EXACTLY the string
 # 'true'. Unset, empty, 'false', 'TRUE', '1' and 'yes' all leave publication disabled, and the
@@ -38,13 +40,15 @@
 # the whole time, which is how the first real target is inspected:
 #
 #   1. merge this workflow to main with POSTMAN_AUTOPUBLISH_ENABLED unset
-#   2. configure the secret and the two collection-id variables
+#   2. configure the secret and the three target-id variables: POSTMAN_COLLECTION_ID,
+#      POSTMAN_PRODUCTION_ENVIRONMENT_ID and POSTMAN_SANDBOX_ENVIRONMENT_ID
 #   3. run workflow_dispatch -> mode: verify, and read the reported target identities,
 #      normalized hashes and ACTION
 #   4. only after that result is independently accepted, set POSTMAN_AUTOPUBLISH_ENABLED=true
-#   5. then authorize a publish dispatch, or let the next reviewed collection change publish
+#   5. then authorize a publish dispatch, or let the next reviewed change to a published
+#      artifact publish
 
-name: Publish Postman collections
+name: Publish Postman artifacts
 
 on:
   pull_request:
@@ -56,7 +60,7 @@ on:
       - '.github/scripts/**'
   push:
     branches: [main]
-    # Publication path filter: ONLY a change to a published collection republishes.
+    # Publication path filter: ONLY a change to one of the three published artifacts republishes.
     paths:
       - 'onchainrisk_api_collection.json'
       - 'production.postman_environment.json'
@@ -82,7 +86,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate collections (no secrets)
+    name: Validate published artifacts (no secrets)
     runs-on: ubuntu-latest
     steps:
       - name: Check out the ref under test
@@ -96,7 +100,7 @@ jobs:
           node --version
           node -e 'const [maj] = process.versions.node.split("."); if (Number(maj) < 20) { console.error("Node 20+ required"); process.exit(1); }'
 
-      - name: Both collections parse and carry unambiguous identities
+      - name: The collection and both environments parse and carry unambiguous identities
         run: node .github/scripts/postman-sync.mjs --selftest
 
       - name: Publisher unit tests
