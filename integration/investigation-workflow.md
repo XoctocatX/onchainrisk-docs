@@ -300,4 +300,4 @@ To set realistic expectations:
 - `capability-matrix.md` — paid vs sandbox feature comparison, networks, rate limits, plan quotas.
 - `webhooks.md` — payload sample, HMAC verification, latency.
 - OpenAPI: [`https://api.onchainrisk.io/openapi.yaml`](https://api.onchainrisk.io/openapi.yaml) (paid), [`https://api.onchainrisk.io/openapi-sandbox.yaml`](https://api.onchainrisk.io/openapi-sandbox.yaml) (sandbox).
-- Postman: [`postman-paid-collection.json`](https://api.onchainrisk.io/postman-paid-collection.json), [`postman-sandbox-collection.json`](https://api.onchainrisk.io/postman-sandbox-collection.json), with environments `postman-paid-environment.json`, `postman-sandbox-environment.json`.
+- Postman: [`postman-collection.json`](https://api.onchainrisk.io/postman-collection.json) — ONE collection for both tiers, used with the [Production](https://api.onchainrisk.io/postman-production-environment.json) or [Sandbox](https://api.onchainrisk.io/postman-sandbox-environment.json) environment. The credential is the only thing that changes.

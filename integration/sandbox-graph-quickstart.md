@@ -178,8 +178,8 @@ Paid keys can also call this endpoint (the response is still sandbox-shaped); th
 ## 10. Postman
 
 Drop these into Postman for a one-click setup:
-- Collection: [`postman-sandbox-collection.json`](https://api.onchainrisk.io/postman-sandbox-collection.json)
-- Environment: [`postman-sandbox-environment.json`](https://api.onchainrisk.io/postman-sandbox-environment.json) — set `sandbox_api_key` and `sample_address` to your values.
+- Collection: [`postman-collection.json`](https://api.onchainrisk.io/postman-collection.json) — the SAME collection the production docs link; the environment selects the tier.
+- Environment: [`postman-sandbox-environment.json`](https://api.onchainrisk.io/postman-sandbox-environment.json) — set `api_key` to your sandbox key. `sample_address` already holds the documented fixture address.
 
 The collection includes a "Graph preview — sample (depth=1, last 7d)" item with response shape assertions baked in.
 

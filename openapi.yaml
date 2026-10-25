@@ -2212,18 +2212,56 @@ paths:
           application/json:
             schema:
               type: object
-              required: [blockNumber, network, reportData]
+              # NO property is required on every path. The runtime takes THREE routes and each
+              # needs different input, so a single required set described a constraint it does
+              # not enforce — and hid the preferred one. See the description of each property.
+              required: []
               properties:
-                blockNumber: { type: integer }
-                network: { type: string }
-                reportData: { type: object }
+                reportPublicId:
+                  type: string
+                  description: |
+                    The saved report's public id, from `POST /api/v1/block/analyze` — which
+                    already SAVED the report. This is the PREFERRED path: it resolves that
+                    report directly and needs no cache.
+
+                    `404` if no report with this id belongs to you. Not-found and not-owned are
+                    deliberately the same answer.
+                reportId:
+                  type: string
+                  description: |
+                    An alias of `reportPublicId`, carrying the same public UUID.
+                    `reportPublicId` wins when both are supplied; a falsy one falls through.
+                blockNumber:
+                  type: integer
+                  description: |
+                    LEGACY correlation path, used only when neither identifier is supplied:
+                    the analysis is found through a short-lived per-account cache keyed by
+                    block and network. Both `blockNumber` and `network` are required on this
+                    path, and `422` is the answer when neither identifier nor both of these
+                    are present. Prefer `reportPublicId`.
+                network:
+                  type: string
+                  description: The network of the legacy correlation path. See `blockNumber`.
+                name:
+                  type: string
+                  description: |
+                    Renames the resolved report. TRUNCATED at 200 characters rather than
+                    rejected, and an empty value is ignored. The only mutation this operation
+                    performs.
+                reportData:
+                  type: object
+                  deprecated: true
+                  description: |
+                    **IGNORED.** No code path reads it. The analysis was persisted by
+                    `POST /api/v1/block/analyze`; this operation resolves what that call
+                    saved and never accepts caller-supplied report content. Kept as an
+                    accepted, optional property so a client still sending it is unaffected.
       responses:
         '200':
           description: |
-            Report saved. The handler answers **200**, not 201 — every success path resolves an
-            EXISTING analysis (optionally renaming it), and no code path answers 201. A legacy
-            cached analysis with no public id cannot be saved and answers
-            `410 LEGACY_CACHE_NO_SAVE`.
+            The report was resolved, and renamed if `name` was supplied. The handler answers
+            **200**, not 201 — every success path resolves an EXISTING analysis, and no code
+            path answers 201.
           content:
             application/json:
               schema:
@@ -2244,6 +2282,63 @@ paths:
                       reportPublicId:
                         type: [string, "null"]
                         description: Same value as `reportId`; both keys are emitted.
+        '404':
+          description: |
+            No report with the supplied `reportPublicId` / `reportId` belongs to this account.
+            Not-found and not-owned are the SAME answer, deliberately: distinguishing them
+            would tell a caller that someone else's report exists.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, error]
+                properties:
+                  success: { type: boolean, enum: [false] }
+                  error:
+                    type: object
+                    required: [message, code]
+                    properties:
+                      message: { type: string }
+                      code: { type: string }
+        '410':
+          description: |
+            The legacy correlation path found something that can no longer be saved. Two
+            distinct cases, both 410, told apart by `error.code`:
+
+            * `LEGACY_CACHE_NO_SAVE` — the cached analysis predates public ids, so there is
+              nothing to resolve. Re-run `POST /api/v1/block/analyze`.
+            * `REPORT_DELETED_RERUN_REQUIRED` — the correlation exists but the report row is
+              gone. Re-run the analysis.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, error]
+                properties:
+                  success: { type: boolean, enum: [false] }
+                  error:
+                    type: object
+                    required: [message, code]
+                    properties:
+                      message: { type: string }
+                      code: { type: string }
+        '422':
+          description: |
+            Not enough to identify a report: no `reportPublicId`, no `reportId`, and not both
+            of `blockNumber` and `network`. Also returned for a body that is not a JSON object.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, error]
+                properties:
+                  success: { type: boolean, enum: [false] }
+                  error:
+                    type: object
+                    required: [message, code]
+                    properties:
+                      message: { type: string }
+                      code: { type: string }
     get:
       tags: [Saved Reports]
       summary: List saved block reports
@@ -2391,6 +2486,64 @@ paths:
                       reportPublicId:
                         type: [string, "null"]
                         description: Same value as `reportId`; both keys are emitted.
+        '404':
+          description: |
+            No report with the supplied `reportPublicId` / `reportId` belongs to this account,
+            or the address correlation resolved to no report. Not-found and not-owned are the
+            SAME answer, deliberately: distinguishing them would tell a caller that someone
+            else's report exists.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, error]
+                properties:
+                  success: { type: boolean, enum: [false] }
+                  error:
+                    type: object
+                    required: [message, code]
+                    properties:
+                      message: { type: string }
+                      code: { type: string }
+        '410':
+          description: |
+            The address correlation found something that can no longer be resolved. Two
+            distinct cases, both 410, told apart by `error.code`:
+
+            * `LEGACY_CACHE_NO_SAVE` — the cached scan predates public ids, so there is
+              nothing to resolve. Re-run `POST /api/v1/multichain/scan`.
+            * `REPORT_DELETED_RERUN_REQUIRED` — the correlation exists but the report row is
+              gone. Re-run the scan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, error]
+                properties:
+                  success: { type: boolean, enum: [false] }
+                  error:
+                    type: object
+                    required: [message, code]
+                    properties:
+                      message: { type: string }
+                      code: { type: string }
+        '422':
+          description: |
+            Not enough to identify a report: none of `reportPublicId`, `reportId` or `address`
+            was supplied. Also returned for a body that is not a JSON object.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, error]
+                properties:
+                  success: { type: boolean, enum: [false] }
+                  error:
+                    type: object
+                    required: [message, code]
+                    properties:
+                      message: { type: string }
+                      code: { type: string }
     get:
       tags: [Saved Reports]
       summary: List saved multi-chain reports

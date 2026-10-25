@@ -18,7 +18,7 @@ import {
 
 const OWNER = '31415926';
 const ID = 'aaaaaaaa-1111-2222-3333-444444444444';
-const PAID = 'OnChainRisk Paid API';
+const PAID = 'OnChainRisk API';
 
 const rootEvent = (listen, ids) => ({
   listen,
@@ -153,7 +153,7 @@ describe('REMOTE_DUPLICATE_ORDER_INDEPENDENT', () => {
 });
 
 describe('INFO_POSTMAN_ID_PRESERVED', () => {
-  const entry = COLLECTIONS.find((c) => c.role === 'paid');
+  const entry = COLLECTIONS[0];
   const onlyPostmanId = () => {
     const c = shell({ item: [] });
     delete c.collection.info._postman_id;

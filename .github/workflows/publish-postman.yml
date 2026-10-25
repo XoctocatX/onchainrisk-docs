@@ -1,10 +1,18 @@
-# Publish the reviewed Postman collections in this repository to Postman cloud.
+# Publish the reviewed Postman artifacts in this repository to Postman cloud.
+#
+# THREE ARTIFACTS since the #748 cutover, each independently verifiable: ONE canonical collection
+# used with EITHER of two environments. This replaced two per-tier collections, which stated that
+# paid and sandbox are different integrations; they are one integration with two credentials.
+# The old sandbox CLOUD collection is retained and deprecated rather than deleted — users may
+# have imported or forked it — and this workflow does not touch it.
 #
 # AUTHORITY. The checked-in JSON is the publication source. It arrives by mirror sync from
 # XoctocatX/onchainrisk, which already gates OpenAPI <-> Postman conformance, so this workflow
 # never regenerates a collection from OpenAPI and never treats Postman as a source of truth:
 #
 #     CORE canonical -> production served artifacts -> this mirror -> Postman cloud
+#
+# and a write to any one of the three never implies a write to another. `verify` issues none.
 #
 # TRUST MODEL. A pull request runs validation ONLY and has no access to the publishing
 # credential — the publish job is gated on `github.event_name` and on the ref being main, and
@@ -15,8 +23,9 @@
 # REQUIRED REPOSITORY CONFIGURATION (set once, by a maintainer):
 #   secret    POSTMAN_API_KEY                  a Postman API key with update rights on the two
 #                                              collections below, and nothing else
-#   variable  POSTMAN_PAID_COLLECTION_ID       the Postman CLOUD id of "OnChainRisk Paid API"
-#   variable  POSTMAN_SANDBOX_COLLECTION_ID    the Postman CLOUD id of "OnChainRisk Sandbox API"
+#   variable  POSTMAN_COLLECTION_ID            the Postman CLOUD id of "OnChainRisk API"
+#   variable  POSTMAN_PRODUCTION_ENVIRONMENT_ID  the CLOUD id of "OnChainRisk Production"
+#   variable  POSTMAN_SANDBOX_ENVIRONMENT_ID     the CLOUD id of "OnChainRisk Sandbox"
 #   variable  POSTMAN_AUTOPUBLISH_ENABLED      the activation kill switch — see below
 #
 # The `_postman_id` values inside the checked-in files are collection-document identifiers and
@@ -40,16 +49,18 @@ name: Publish Postman collections
 on:
   pull_request:
     paths:
-      - 'paid-collection.json'
-      - 'onchainrisk_sandbox_api_collection.json'
+      - 'onchainrisk_api_collection.json'
+      - 'production.postman_environment.json'
+      - 'sandbox.postman_environment.json'
       - '.github/workflows/publish-postman.yml'
       - '.github/scripts/**'
   push:
     branches: [main]
     # Publication path filter: ONLY a change to a published collection republishes.
     paths:
-      - 'paid-collection.json'
-      - 'onchainrisk_sandbox_api_collection.json'
+      - 'onchainrisk_api_collection.json'
+      - 'production.postman_environment.json'
+      - 'sandbox.postman_environment.json'
   workflow_dispatch:
     inputs:
       mode:
@@ -121,8 +132,9 @@ jobs:
       - name: Publish, then verify the remote matches this repository
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
-          POSTMAN_PAID_COLLECTION_ID: ${{ vars.POSTMAN_PAID_COLLECTION_ID }}
-          POSTMAN_SANDBOX_COLLECTION_ID: ${{ vars.POSTMAN_SANDBOX_COLLECTION_ID }}
+          POSTMAN_COLLECTION_ID: ${{ vars.POSTMAN_COLLECTION_ID }}
+          POSTMAN_PRODUCTION_ENVIRONMENT_ID: ${{ vars.POSTMAN_PRODUCTION_ENVIRONMENT_ID }}
+          POSTMAN_SANDBOX_ENVIRONMENT_ID: ${{ vars.POSTMAN_SANDBOX_ENVIRONMENT_ID }}
           POSTMAN_AUTOPUBLISH_ENABLED: ${{ vars.POSTMAN_AUTOPUBLISH_ENABLED }}
         run: node .github/scripts/postman-sync.mjs --publish
 
@@ -143,7 +155,8 @@ jobs:
       - name: Report NOOP/UPDATE without writing
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
-          POSTMAN_PAID_COLLECTION_ID: ${{ vars.POSTMAN_PAID_COLLECTION_ID }}
-          POSTMAN_SANDBOX_COLLECTION_ID: ${{ vars.POSTMAN_SANDBOX_COLLECTION_ID }}
+          POSTMAN_COLLECTION_ID: ${{ vars.POSTMAN_COLLECTION_ID }}
+          POSTMAN_PRODUCTION_ENVIRONMENT_ID: ${{ vars.POSTMAN_PRODUCTION_ENVIRONMENT_ID }}
+          POSTMAN_SANDBOX_ENVIRONMENT_ID: ${{ vars.POSTMAN_SANDBOX_ENVIRONMENT_ID }}
           POSTMAN_AUTOPUBLISH_ENABLED: ${{ vars.POSTMAN_AUTOPUBLISH_ENABLED }}
         run: node .github/scripts/postman-sync.mjs --verify

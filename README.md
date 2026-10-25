@@ -122,16 +122,33 @@ Full request/response detail, parameters, and every endpoint: **[OpenAPI spec](h
 
 ---
 
+## Postman: one collection, two environments
+
+Import **one** collection and pick an environment. The credential is the only thing that
+changes — same requests, same paths, same bodies, same client code:
+
+| | |
+|---|---|
+| collection | `OnChainRisk API` — 45 requests, bearer `{{api_key}}` |
+| environment | `OnChainRisk Production` — `api_key = ocr_live_…`, `tier = production` |
+| environment | `OnChainRisk Sandbox` — `api_key = ocr_test_…`, `tier = sandbox` |
+
+Both environments declare exactly the same variable **names**, so nothing in the collection can
+depend on which one is loaded. The two share operations take no credential at all — the share
+token *is* the credential — and they override the collection bearer to `noauth` for that reason.
+
+This replaced two per-tier collections. Their download URLs still resolve, as byte-identical
+copies of the canonical collection, so existing links and bookmarks keep working.
+
 ## Links
 
 - **API hub:** https://onchainrisk.io/blockchain-analytics-api/
 - **OpenAPI spec:** https://api.onchainrisk.io/openapi.yaml
 - **API reference:** https://api.onchainrisk.io/docs
 - **Sandbox docs:** https://api.onchainrisk.io/sandbox-docs
-- **Postman (paid):** https://api.onchainrisk.io/postman-paid-collection.json
-- **Postman (sandbox):** https://api.onchainrisk.io/postman-sandbox-collection.json
-- **Postman environment (paid):** [paid.postman_environment.json](paid.postman_environment.json)
-- **Postman environment (sandbox):** [sandbox.postman_environment.json](sandbox.postman_environment.json)
+- **Postman collection (one, for both tiers):** https://api.onchainrisk.io/postman-collection.json
+- **Postman environment — Production:** https://api.onchainrisk.io/postman-production-environment.json · [production.postman_environment.json](production.postman_environment.json)
+- **Postman environment — Sandbox:** https://api.onchainrisk.io/postman-sandbox-environment.json · [sandbox.postman_environment.json](sandbox.postman_environment.json)
 - **Webhooks integration guide:** [integration/webhooks.md](integration/webhooks.md)
 - **Live coverage matrix:** https://app.onchainrisk.io/coverage
 - **Get an API key:** https://app.onchainrisk.io/dashboard/api-keys

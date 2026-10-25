@@ -16,8 +16,8 @@ import {
 } from '../postman-sync.mjs';
 
 const OWNER = '31415926';
-const PAID = 'OnChainRisk Paid API';
-const SANDBOX = 'OnChainRisk Sandbox API';
+const PAID = 'OnChainRisk API';
+const SANDBOX = 'OnChainRisk API';
 
 /** What Postman actually returns: managed identity on every structural entity. */
 function serverShaped(name = PAID, { id = 'aaaaaaaa-1111-2222-3333-444444444444' } = {}) {
@@ -81,12 +81,16 @@ function localShaped(name = PAID) {
 }
 
 describe('BLOCKER 1 — the role is bound to the remote target', () => {
-  const paidEntry = COLLECTIONS.find((c) => c.role === 'paid');
-  const sandboxEntry = COLLECTIONS.find((c) => c.role === 'sandbox');
+  const paidEntry = COLLECTIONS[0];
+  const sandboxEntry = COLLECTIONS[0];
 
-  test('both roles declare a hard-coded expected collection name', () => {
+  test('the single collection role declares a hard-coded expected name', () => {
+    // There were TWO per-tier collections, and the pair of roles had to be told apart. There is
+    // ONE now, so both references resolve to it — and the property that survives is the one that
+    // mattered: the expected name is hard-coded on the entry, never read off the remote.
+    assert.equal(COLLECTIONS.length, 1);
     assert.equal(paidEntry.expectedName, PAID);
-    assert.equal(sandboxEntry.expectedName, SANDBOX);
+    assert.equal(paidEntry, sandboxEntry);
   });
 
   test('a correct role / name / identity is allowed to proceed', () => {
@@ -106,21 +110,29 @@ describe('BLOCKER 1 — the role is bound to the remote target', () => {
     }));
   });
 
-  test('the PAID variable pointing at the SANDBOX collection FAILS', () => {
-    const remote = serverShaped(SANDBOX);
+  test('the collection variable pointing at ANOTHER collection FAILS', () => {
+    // The old pair of tests swapped the two per-tier collections against each other. With one
+    // collection the equivalent mistake is the id pointing at some other collection entirely —
+    // the deprecated sandbox cloud collection, for instance, which is retained and must never be
+    // written to by this publisher.
+    const remote = serverShaped('OnChainRisk Sandbox API (DEPRECATED)');
     assert.throws(() => assertTargetBinding({
       entry: paidEntry, local: localShaped(PAID), remote, configuredId: remote.collection.info._postman_id,
     }), (e) => e instanceof SyncError
-      && /points at a collection named "OnChainRisk Sandbox API"/.test(e.message)
-      && /may only update "OnChainRisk Paid API"/.test(e.message)
+      && /points at a collection named "OnChainRisk Sandbox API \(DEPRECATED\)"/.test(e.message)
+      && /may only update "OnChainRisk API"/.test(e.message)
       && /swapped or mistyped variable/.test(e.message));
   });
 
-  test('the SANDBOX variable pointing at the PAID collection FAILS', () => {
+  test('a LOCAL file whose name does not match the role FAILS before any id is trusted', () => {
+    // The other half of the swap: the binding asserts the LOCAL name too, so a mis-copied file
+    // cannot be published under a role it does not belong to. This was previously covered by
+    // pointing the sandbox role at the paid file.
     const remote = serverShaped(PAID);
     assert.throws(() => assertTargetBinding({
-      entry: sandboxEntry, local: localShaped(SANDBOX), remote, configuredId: remote.collection.info._postman_id,
-    }), (e) => /points at a collection named "OnChainRisk Paid API"/.test(e.message));
+      entry: paidEntry, local: localShaped('OnChainRisk Sandbox API'), remote,
+      configuredId: remote.collection.info._postman_id,
+    }), (e) => e instanceof SyncError && /OnChainRisk Sandbox API/.test(e.message));
   });
 
   test('an unrelated existing editable collection FAILS', () => {

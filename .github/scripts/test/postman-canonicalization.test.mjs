@@ -427,18 +427,32 @@ describe('POST_WRITE_SHAPE_REGRESSION', () => {
     //   => 38 + 19 = 57 paths the comparator normalizes
     //
     // Independently derived from the committed collection, not copied from a CI log.
-    const local = readLocal(COLLECTIONS.find((c) => c.role === 'paid').file);
+    // THE SHAPE MOVED AGAIN, exactly as this test's own comment anticipated — and this time it
+    // simplified rather than drifted. The canonical collection is GENERATED, and the generator
+    // emits `response: []` on every request and no saved examples at all: the 19 examples were
+    // hand-authored in the two per-tier collections the cutover replaced. So the arithmetic is
+    // re-derived, the categories are the same three, and the cross-check between the two ways of
+    // counting "no examples" is kept because it is what makes the totals trustworthy:
+    //
+    //   45 requests · 0 saved examples · 0 with `response` ABSENT · 45 authored empty arrays
+    //   => 45 requests carry no examples
+    //   => 0 + 0 = 0 paths the comparator has to normalize for an ABSENT key, and 45 empty
+    //      arrays it drops instead
+    //
+    // The 58-path incident shape is NOT lost: the next test preserves it as a decoupled fixture,
+    // which is precisely why it was written that way.
+    const local = readLocal(COLLECTIONS[0].file);
     const rs = requests(local);
     const absent = rs.filter((r) => !('response' in r));
     const emptyArrays = rs.filter((r) => Array.isArray(r.response) && r.response.length === 0);
     const noExamples = rs.filter((r) => !Array.isArray(r.response) || r.response.length === 0);
     const examples = rs.reduce((n, r) => n + (r.response?.length ?? 0), 0);
-    assert.equal(rs.length, 45, 'paid requests');
-    assert.equal(examples, 19, 'saved examples');
-    assert.equal(absent.length, 38, 'requests with the response key absent');
-    assert.equal(emptyArrays.length, 3, 'requests with an authored empty response array');
-    assert.equal(noExamples.length, 41, '38 absent + 3 authored empty arrays');
-    assert.equal(absent.length + examples, 57, 'normalized serialization paths');
+    assert.equal(rs.length, 45, 'requests');
+    assert.equal(examples, 0, 'the generator authors no saved examples');
+    assert.equal(absent.length, 0, 'requests with the response key absent');
+    assert.equal(emptyArrays.length, 45, 'requests with a generated empty response array');
+    assert.equal(noExamples.length, 45, '0 absent + 45 empty arrays');
+    assert.equal(absent.length + examples, 0, 'no ABSENT-key normalization path remains');
     // The two ways of counting "no examples" must agree — if they ever diverge, one of the two
     // categories above was mis-measured and the totals cannot be trusted.
     assert.equal(absent.length + emptyArrays.length, noExamples.length);
