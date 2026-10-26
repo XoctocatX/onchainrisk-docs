@@ -280,13 +280,41 @@ describe('CONTENT_TIMESTAMP_FIELDS_PRESERVED / TIMESTAMP_NORMALIZATION_POSITION_
     assert.equal(semanticallyEqual(remote, drifted), false);
   });
 
-  test('the four createdAt strings in the REAL paid collection are content and survive', () => {
-    const local = readLocal('paid-collection.json');
-    const raw = JSON.stringify(local);
-    const before = (raw.match(/createdAt/g) ?? []).length;
-    assert.equal(before, 4, 'the real collection carries four content-level createdAt strings');
-    const normalized = JSON.stringify(normalizeForCompare(local));
-    assert.equal((normalized.match(/createdAt/g) ?? []).length, 4, 'all four must survive normalization');
+  test('position-aware normalization is proven on a SYNTHETIC collection, not on a premise', () => {
+    // The real paid collection used to carry four `createdAt` strings inside response-example
+    // BODIES — our content, which must survive normalization while the server's own `createdAt`
+    // at a managed position is stripped. The canonical collection has NO saved examples, so that
+    // premise is simply gone: asserting "four" would be asserting a fact about a retired file.
+    //
+    // The PROPERTY is what mattered, and it is position-dependence — so it is proven on a
+    // synthetic collection that puts `createdAt` in both places at once. That is a stronger test
+    // than the original, because it no longer depends on the real file happening to contain one.
+    const synthetic = {
+      info: { name: 'X', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+      item: [{
+        name: 'r',
+        createdAt: '2020-01-01T00:00:00Z',            // MANAGED position: must be stripped
+        request: { method: 'GET', url: { raw: '{{base_url}}/x' } },
+        response: [{
+          name: 'ex',
+          code: 200,
+          createdAt: '2020-01-01T00:00:00Z',          // MANAGED position: must be stripped
+          body: JSON.stringify({ createdAt: '2021-05-05T00:00:00Z' }),   // CONTENT: must survive
+        }],
+      }],
+    };
+    const normalized = JSON.stringify(normalizeForCompare(synthetic));
+    assert.equal((normalized.match(/2020-01-01/g) ?? []).length, 0, 'managed timestamps are stripped');
+    assert.equal((normalized.match(/2021-05-05/g) ?? []).length, 1, 'content timestamps survive');
+
+    // And on the real file: it has no saved examples at all, so there is nothing at a managed
+    // response position to strip — stated explicitly rather than left as an unexamined zero.
+    const local = readLocal('onchainrisk_api_collection.json');
+    const leaves = (node, out = []) => {
+      for (const n of node.item ?? []) (Array.isArray(n.item) ? leaves(n, out) : out.push(n));
+      return out;
+    };
+    assert.equal(leaves(local).filter((i) => (i.response ?? []).length).length, 0, 'no saved examples');
   });
 });
 

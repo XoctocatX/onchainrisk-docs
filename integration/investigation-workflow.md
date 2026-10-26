@@ -64,36 +64,15 @@ curl -X POST https://api.onchainrisk.io/api/v1/check \
 
 ---
 
-## 3. Expand neighbours
+## 3. Expand neighbours — `POST /api/graph/expand`
 
-Two endpoints, **different products** despite the similar name. Pick by tier:
-
-### 3a. Sandbox preview — `POST /api/v1/sandbox/graph/expand`
-
-Cheap, depth-1, last-7-days, ≤20 nodes / ≤30 edges. **For integration testing.** No reports persisted, no usage rows.
-
-```bash
-curl -X POST https://api.onchainrisk.io/api/v1/sandbox/graph/expand \
-  -H "Authorization: Bearer ocr_test_PLACEHOLDER" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "address": "0xYourAddress",
-    "network": "eth",
-    "depth": 1
-  }'
-```
-
-`depth` is silently clamped to 1 — `_sandbox.truncated_fields.depth = "max_1"` is reported back if requested >1.
-
-**Supported networks (13):** `eth, arbitrum, optimism, base, polygon, avalanche, zksync, scroll, celo, cronos, moonbeam, bsc, tron` (source of truth: `SANDBOX_GRAPH_SUPPORTED_NETWORKS` in `web/api/src/config/sandbox-policy.js`). Every other network — including `linea`, `fantom` and `polygon_zkevm`, which were removed from the sandbox graph on 2026-05-04 after upstream 503s — returns **422** `NETWORK_NOT_SUPPORTED_IN_SANDBOX`.
-
-### 3b. Paid graph — `POST /api/graph/expand`
-
-One-hop counterparty expansion for any address. **Multi-hop is iterative on the client side** — call this endpoint per node you want to expand. There is no single-call multi-hop API.
+ONE endpoint, both tiers. Same method, same path, same request and response contract; your
+credential selects the execution. Multi-hop is iterative on the client side — call this endpoint
+per node you want to expand. There is no single-call multi-hop API.
 
 ```bash
 curl -X POST https://api.onchainrisk.io/api/graph/expand \
-  -H "Authorization: Bearer ocr_live_PLACEHOLDER" \
+  -H "Authorization: Bearer $OCR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "address": "0xYourAddress",
@@ -101,15 +80,55 @@ curl -X POST https://api.onchainrisk.io/api/graph/expand \
   }'
 ```
 
-Returns up to 20 aggregated counterparty edges. Logged as a `graph_expand` action — does **not** count toward your monthly check quota. Plan-level rate limits still apply (see `capability-matrix.md`).
+**With an `ocr_test_*` key (sandbox execution):** bounded — real address and network, depth 1, last
+7 days, ≤20 nodes / ≤30 edges, no billing, no persistence. `depth` is silently clamped to 1 and
+`_sandbox.truncated_fields.depth = "max_1"` is reported back if you ask for more.
 
-**Supported networks (20):** the 14 EVM networks plus `bsc`, `tron`, `btc`, `ltc`, `sol`, `ton` — i.e. the paid graph covers `linea`, `fantom` and `polygon_zkevm` (which the sandbox graph does not) and adds the non-EVM UTXO/account chains. Authority: `EVM_NETWORKS` (14) plus the dedicated `tron` / `btc` / `ltc` / `sol` / `ton` / `bsc` branches in `web/api/main.py::_get_counterparties`. The three remaining accepted networks — `xrp`, `cosmos`, `cardano` — have no graph-expand handler and return **422** `NETWORK_ANALYSIS_NOT_AVAILABLE_FOR_ENDPOINT`. A handler existing does not guarantee edges: per-network depth is upstream-dependent, and an upstream failure surfaces as **503** `EXPAND_UNAVAILABLE` rather than a silent empty graph.
+**With an `ocr_live_*` key (paid execution):** up to 20 aggregated counterparty edges over the full
+history. Logged as a `graph_expand` action — does **not** count toward your monthly check quota.
+Plan-level rate limits still apply (see `capability-matrix.md`).
+
+The edge shape is identical on both tiers, so a client written against sandbox needs no response
+handling changes when you swap the credential.
+
+**Networks, sandbox execution (13):** `eth, arbitrum, optimism, base, polygon, avalanche, zksync,
+scroll, celo, cronos, moonbeam, bsc, tron` (source of truth: `SANDBOX_GRAPH_SUPPORTED_NETWORKS` in
+`web/api/src/config/sandbox-policy.js`). Every other network — including `linea`, `fantom` and
+`polygon_zkevm`, removed on 2026-05-04 after upstream 503s — returns **422**
+`NETWORK_NOT_SUPPORTED_IN_SANDBOX`.
+
+**Networks, paid execution (20):** the 14 EVM networks plus `bsc`, `tron`, `btc`, `ltc`, `sol`,
+`ton` — i.e. paid covers `linea`, `fantom` and `polygon_zkevm` (which sandbox execution does not)
+and adds the non-EVM UTXO/account chains. Authority: `EVM_NETWORKS` (14) plus the dedicated `tron` /
+`btc` / `ltc` / `sol` / `ton` / `bsc` branches in `web/api/main.py::_get_counterparties`. The three
+remaining accepted networks — `xrp`, `cosmos`, `cardano` — have no graph-expand handler and return
+**422** `NETWORK_ANALYSIS_NOT_AVAILABLE_FOR_ENDPOINT`. A handler existing does not guarantee edges:
+per-network depth is upstream-dependent, and an upstream failure surfaces as **503**
+`EXPAND_UNAVAILABLE` rather than a silent empty graph.
+
+*Migration note:* existing integrations calling the historical sandbox graph path
+`/api/v1/sandbox/graph/expand` continue to work unchanged. It is no longer part of the published
+contract, so new integrations should use `POST /api/graph/expand`.
 
 ---
 
 ## 4. Watchlist — `POST /api/watchlist`
 
-Add an address to your monitored list. Cron checks each item every ~5 minutes for new transactions.
+Add an address to your monitored list. On the paid API a job checks each item every ~5 minutes for
+new transactions and delivers alerts through your enabled channels.
+
+**On sandbox (`ocr_test_*`) the same six operations run, and nothing is monitored.** Since #748
+Slice E the whole CRUD lifecycle — create, list, update, soft delete, re-activate — is real
+owner-scoped sandbox state with the paid request and response contracts, so the client code below
+is the code you keep when you swap the key. What does NOT happen on sandbox: no scheduled job sees
+your sandbox entries, no provider is polled, `is_contract`/`deployer_address` are not detected, and
+no email, Telegram message or webhook is ever sent — the `notify_*` flags are contract data only.
+The alert endpoints are exercisable because creating an entry seeds deterministic SIMULATED alerts
+(synthetic `tx_hash`, `"simulated": true` in `details`, `notified_*` always 0). Sandbox entries and
+their alerts expire 24 hours after their last change. Sandbox watchlist state is owned by the
+ACCOUNT, not by the credential: every sandbox key on the same account sees and mutates the same
+entries and the same alert history, and the limits of 25 active entries (50 including removed ones)
+are per account — sandbox execution policy, not a plan quota. Different accounts stay isolated.
 
 ```bash
 curl -X POST https://api.onchainrisk.io/api/watchlist \
@@ -154,6 +173,16 @@ curl -X PATCH https://api.onchainrisk.io/api/notifications/settings \
 **HMAC verification, latency, retry expectations, payload sample** — see `webhooks.md`.
 
 You can call `POST /api/notifications/test` to send a test alert through every enabled channel.
+
+**On sandbox (`ocr_test_*`)** the same `GET`/`PATCH` run, and since #748 Slice F the settings are
+REAL sandbox-owned state: owned by the account (every sandbox key on it shares them), with paid's
+partial-update semantics and paid's response shape, and the first `GET` creates the defaults just
+as paid's does. **Nothing is armed.** Whatever you enable, no email, Telegram message or webhook
+request leaves the API on this tier, and a `webhook_secret` you send is never returned and never
+used to sign anything. `GET /api/v1/webhook/deliveries` answers with a committed deterministic
+FIXTURE so you can build and test your audit UI — those records are NOT evidence that any webhook
+was sent, because the sandbox sends none. Telegram connect/disconnect stay paid-only. Sandbox
+settings expire 24 hours after their last change.
 
 ---
 
@@ -212,25 +241,26 @@ async function call(method, path, body) {
 const check = await call('POST', '/api/v1/check', { address: ADDRESS, network: NETWORK });
 console.log('riskScore:', check.data.riskScore, 'level:', check.data.riskLevel);
 
-// 2. Expand graph (sandbox vs paid endpoint based on key)
-const graphPath = isSandbox ? '/api/v1/sandbox/graph/expand' : '/api/graph/expand';
-const graphBody = { address: ADDRESS, network: NETWORK, ...(isSandbox && { depth: 1 }) };
-const graph = await call('POST', graphPath, graphBody);
+// 2. Expand graph — ONE path on both tiers; the credential selects the execution
+const graph = await call('POST', '/api/graph/expand', { address: ADDRESS, network: NETWORK });
 const nodes = graph.data?.nodes ?? graph.nodes ?? [];
 const edges = graph.data?.edges ?? graph.edges ?? [];
 console.log('graph:', nodes.length, 'nodes,', edges.length, 'edges');
 
-// 3. Add to watchlist (paid only — sandbox cannot mutate watchlist)
-if (!isSandbox) {
-  const watch = await call('POST', '/api/watchlist', {
-    address: ADDRESS, network: NETWORK,
-    label: 'Investigation #1',
-    notify_email: true, notify_webhook: false,
-  });
-  console.log('watchlist item id:', watch.data.id);
-} else {
-  console.log('watchlist: skipped (sandbox tier).');
-}
+// 3. Add to watchlist — the SAME call on both tiers since #748 Slice E. On sandbox the entry is
+//    real sandbox-scoped state with the paid contract, and nothing monitors it or notifies you.
+const watch = await call('POST', '/api/watchlist', {
+  address: ADDRESS, network: NETWORK,
+  label: 'Investigation #1',
+  notify_email: true, notify_webhook: false,
+});
+console.log('watchlist item id:', watch.data.item.id, isSandbox ? '(sandbox: simulated)' : '');
+
+// 4. Read its alert history. Paid fills this from real monitoring; sandbox returns the
+//    deterministic simulated alerts seeded by the create above, in the same row shape.
+const alerts = await call('GET', `/api/watchlist/${watch.data.item.id}/alerts`);
+console.log('alerts:', alerts.data.total, '| details is a JSON STRING:',
+  typeof alerts.data.alerts[0]?.details);
 ```
 
 For webhook signature verification (when you wire up watchlist alerts), see the **Node verifier** snippet inlined in `webhooks.md`.
@@ -270,4 +300,4 @@ To set realistic expectations:
 - `capability-matrix.md` — paid vs sandbox feature comparison, networks, rate limits, plan quotas.
 - `webhooks.md` — payload sample, HMAC verification, latency.
 - OpenAPI: [`https://api.onchainrisk.io/openapi.yaml`](https://api.onchainrisk.io/openapi.yaml) (paid), [`https://api.onchainrisk.io/openapi-sandbox.yaml`](https://api.onchainrisk.io/openapi-sandbox.yaml) (sandbox).
-- Postman: [`postman-paid-collection.json`](https://api.onchainrisk.io/postman-paid-collection.json), [`postman-sandbox-collection.json`](https://api.onchainrisk.io/postman-sandbox-collection.json), with environments `postman-paid-environment.json`, `postman-sandbox-environment.json`.
+- Postman: [`postman-collection.json`](https://api.onchainrisk.io/postman-collection.json) — ONE collection for both tiers, used with the [Production](https://api.onchainrisk.io/postman-production-environment.json) or [Sandbox](https://api.onchainrisk.io/postman-sandbox-environment.json) environment. The credential is the only thing that changes.

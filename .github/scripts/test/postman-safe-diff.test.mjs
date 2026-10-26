@@ -10,7 +10,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   safeDiff, formatSafeDiff, safeLabel, safeComponent, safeKey, safePath, safeMethod,
-  contentHash, readLocal, COLLECTIONS,
+  contentHash, environmentContentHash, readLocal, COLLECTIONS,
 } from '../postman-sync.mjs';
 
 const base = () => ({
@@ -127,16 +127,39 @@ describe('SAFE_DIFF_SEMANTIC_PATHS', () => {
   });
 
   test('positional indexes are used only where no stable identity exists on BOTH sides', () => {
-    // the real paid collection has two events with listen "test" on one request, so that array
-    // is not keyable; a remote with one such event must not produce add/remove churn
-    const local = readLocal('paid-collection.json');
-    const remote = JSON.parse(JSON.stringify(local));
-    const req = remote.item.find((x) => x.name === 'Analysis').item[0];
-    assert.equal(req.event.filter((e) => e.listen === 'test').length > 1, true, 'fixture premise');
-    req.event = [{ listen: 'test', script: { type: 'text/javascript', exec: ['edited()'] } }];
-    const d = safeDiff(local, remote);
+    // THE PREMISE MOVED. The hand-written paid collection happened to carry two `listen: "test"`
+    // events on one request, which made that array un-keyable — and this test leaned on the real
+    // file containing it. The GENERATED collection emits exactly one test event per scripted
+    // request, so the premise is gone and `assert(… > 1)` would be asserting a property the
+    // artifact no longer has.
+    //
+    // The property under test was never about the real file: it is that a non-keyable array
+    // falls back to POSITIONAL paths and never mixes keyed with indexed selectors. So the
+    // un-keyable shape is constructed here, which also makes the test independent of whatever
+    // the published collection happens to contain next.
+    const local = readLocal('onchainrisk_api_collection.json');
+    const scriptedFolder = local.item.find((f) => (f.item ?? []).some((i) => i.event));
+    const scripted = scriptedFolder.item.find((i) => i.event);
+    assert.equal(scripted.event.filter((e) => e.listen === 'test').length, 1,
+      'the generator emits exactly one test event per scripted request');
+
+    const twoEvents = JSON.parse(JSON.stringify(local));
+    const target = twoEvents.item.find((f) => f.name === scriptedFolder.name)
+      .item.find((i) => i.name === scripted.name);
+    // Two events with the SAME listen value: now the array has no stable identity on this side.
+    target.event = [
+      { listen: 'test', script: { type: 'text/javascript', exec: ['first()'] } },
+      { listen: 'test', script: { type: 'text/javascript', exec: ['second()'] } },
+    ];
+    const remote = JSON.parse(JSON.stringify(twoEvents));
+    remote.item.find((f) => f.name === scriptedFolder.name)
+      .item.find((i) => i.name === scripted.name)
+      .event = [{ listen: 'test', script: { type: 'text/javascript', exec: ['edited()'] } }];
+
+    const d = safeDiff(twoEvents, remote);
     const eventPaths = [...d.added, ...d.removed, ...d.changed].filter((p) => p.includes('.event'));
-    // exactly one added index (the second local event) and one changed script, no name/index mix
+    assert.equal(eventPaths.length > 0, true, 'the mutation must be reported at all');
+    // exactly positional, never a keyed/indexed mix
     assert.equal(eventPaths.some((p) => p.includes('event[test]')), false, 'must not mix keyed and indexed');
     assert.equal(eventPaths.every((p) => /event\[\d+\]/.test(p)), true, `got ${eventPaths.join(', ')}`);
   });
@@ -368,9 +391,29 @@ describe('SAFE_DIFF_DOES_NOT_CHANGE_HASH', () => {
    * Every one of these was re-derived from the committed collections rather than copied out of a
    * CI failure log — the independent derivation is recorded in the PR.
    *
-   * Superseded paid values: 9ccc9a57… (46-request generation) and b5d54c4f… (45 requests, event
-   * still nested under `request`). Superseded sandbox value: b1a89ffc… (21 requests). None is
-   * reachable from the current files.
+   * The sandbox value then moved a third time, and for the plainest reason of all: the sandbox
+   * collection reached FULL PARITY with the paid surface. #748 finished mirroring the public
+   * contract — saved reports, multichain reports, watchlist and alerts, notification settings and
+   * webhook deliveries, and AI investigations — and retired the sandbox-only graph operation, so
+   * the collection went from 44 requests to 45, exactly the paid count. Both collections now
+   * describe the same 45 operations and differ only in execution, which is the whole point of the
+   * sandbox tier.
+   *
+   * Both values moved again with the CORE contract-truth sequence that followed #748, and this
+   * time nothing about the collections' SHAPE changed — the request counts stayed 45 and 45. What
+   * changed is published request bodies and example values, from four reviewed CORE slices:
+   * #553 (deterministic `limit`/`offset` validation on the investigations list), #772 (the three
+   * watchlist request properties the runtime had always accepted), #769 (the multichain reports
+   * POST documented as the RESOLVE it is), and #767 (token reports: `reportPublicId` published as
+   * optional, the paid create example now sending `{{$guid}}`, and three provably false sentences
+   * about report identity corrected). Every one of those is an authorized addition or a
+   * documentation repair in the serving repository's own governance ledger.
+   *
+   * Superseded paid values: 9ccc9a57… (46-request generation), b5d54c4f… (45 requests, event
+   * still nested under `request`) and b7dde0fe… (45 requests, before the contract-truth sequence).
+   * Superseded sandbox values: b1a89ffc… (21 requests), 379e0798… (44 requests, before the #748
+   * parity set) and ac879290… (45 requests, before the contract-truth sequence). None is reachable
+   * from the current files.
    *
    * The event PLACEMENT itself is enforced upstream, in the serving repository's
    * `validate-public-contract` gate, which is where it belongs: the fix was applied downstream
@@ -380,15 +423,25 @@ describe('SAFE_DIFF_DOES_NOT_CHANGE_HASH', () => {
    * These must stay HAND-REVIEWED. There is deliberately no updater that accepts whatever hash
    * appears: the whole point is that a collection change nobody looked at fails here.
    */
-  test('both real collections hash to their reviewed canonical values', () => {
+  test('all three real artifacts hash to their reviewed canonical values', () => {
     const expected = {
-      'paid-collection.json': 'b7dde0fef3ae6de2ca060001ead1492576a03e537ba9ae4ffdd1a3246449bbfc',
-      'onchainrisk_sandbox_api_collection.json': '379e07985aa0e91a2fe9af30d31d63c20e64e3deae252d1564634896a870d303',
+      'onchainrisk_api_collection.json': '21da25ef0fccbc969a0792d22dce6eaa68d2ff0e570e0871f22109359eb19b8c',
     };
     for (const [file, hash] of Object.entries(expected)) {
       assert.equal(contentHash(readLocal(file)), hash, `${file} hash must be byte-for-byte unchanged`);
     }
-  });
+    // The two ENVIRONMENTS are published artifacts too since the cutover, so they get the same
+    // hand-reviewed witness. Their hash is computed by the environment comparator, not the
+    // collection one — a document with no `item[]` has nothing for that one to normalize.
+    const expectedEnvs = {
+      'production.postman_environment.json': '1b55de9d507fccc1a44b14057bc9984f9237e1a34ff1884337632eec5cea20e7',
+      'sandbox.postman_environment.json': 'e7fe2a62d6d8c7bcf3834a845f22208c86e4fc451633c5a79dcb60781412ae75',
+    };
+    for (const [file, hash] of Object.entries(expectedEnvs)) {
+      assert.equal(environmentContentHash(readLocal(file)), hash, `${file} hash must be byte-for-byte unchanged`);
+    }
+  })
+;
 
   test('the reviewed hashes correspond to the reviewed request COUNTS', () => {
     // A hash alone is opaque: a reviewer cannot tell 45 requests from 46 by looking at it. Pinning
@@ -402,8 +455,8 @@ describe('SAFE_DIFF_DOES_NOT_CHANGE_HASH', () => {
       }
       return out;
     };
-    assert.equal(leaves(readLocal('paid-collection.json')).length, 45, 'paid requests');
-    assert.equal(leaves(readLocal('onchainrisk_sandbox_api_collection.json')).length, 44, 'sandbox requests');
+    assert.equal(leaves(readLocal('onchainrisk_api_collection.json')).length, 45, 'paid requests');
+    assert.equal(leaves(readLocal('onchainrisk_api_collection.json')).length, 45, 'sandbox requests');
   });
 
   test('computing a diff does not mutate either input', () => {

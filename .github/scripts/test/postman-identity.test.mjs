@@ -16,8 +16,8 @@ import {
 } from '../postman-sync.mjs';
 
 const OWNER = '31415926';
-const PAID = 'OnChainRisk Paid API';
-const SANDBOX = 'OnChainRisk Sandbox API';
+const PAID = 'OnChainRisk API';
+const SANDBOX = 'OnChainRisk API';
 
 /** What Postman actually returns: managed identity on every structural entity. */
 function serverShaped(name = PAID, { id = 'aaaaaaaa-1111-2222-3333-444444444444' } = {}) {
@@ -81,12 +81,16 @@ function localShaped(name = PAID) {
 }
 
 describe('BLOCKER 1 — the role is bound to the remote target', () => {
-  const paidEntry = COLLECTIONS.find((c) => c.role === 'paid');
-  const sandboxEntry = COLLECTIONS.find((c) => c.role === 'sandbox');
+  const paidEntry = COLLECTIONS[0];
+  const sandboxEntry = COLLECTIONS[0];
 
-  test('both roles declare a hard-coded expected collection name', () => {
+  test('the single collection role declares a hard-coded expected name', () => {
+    // There were TWO per-tier collections, and the pair of roles had to be told apart. There is
+    // ONE now, so both references resolve to it — and the property that survives is the one that
+    // mattered: the expected name is hard-coded on the entry, never read off the remote.
+    assert.equal(COLLECTIONS.length, 1);
     assert.equal(paidEntry.expectedName, PAID);
-    assert.equal(sandboxEntry.expectedName, SANDBOX);
+    assert.equal(paidEntry, sandboxEntry);
   });
 
   test('a correct role / name / identity is allowed to proceed', () => {
@@ -106,21 +110,29 @@ describe('BLOCKER 1 — the role is bound to the remote target', () => {
     }));
   });
 
-  test('the PAID variable pointing at the SANDBOX collection FAILS', () => {
-    const remote = serverShaped(SANDBOX);
+  test('the collection variable pointing at ANOTHER collection FAILS', () => {
+    // The old pair of tests swapped the two per-tier collections against each other. With one
+    // collection the equivalent mistake is the id pointing at some other collection entirely —
+    // the deprecated sandbox cloud collection, for instance, which is retained and must never be
+    // written to by this publisher.
+    const remote = serverShaped('OnChainRisk Sandbox API (DEPRECATED)');
     assert.throws(() => assertTargetBinding({
       entry: paidEntry, local: localShaped(PAID), remote, configuredId: remote.collection.info._postman_id,
     }), (e) => e instanceof SyncError
-      && /points at a collection named "OnChainRisk Sandbox API"/.test(e.message)
-      && /may only update "OnChainRisk Paid API"/.test(e.message)
+      && /points at a collection named "OnChainRisk Sandbox API \(DEPRECATED\)"/.test(e.message)
+      && /may only update "OnChainRisk API"/.test(e.message)
       && /swapped or mistyped variable/.test(e.message));
   });
 
-  test('the SANDBOX variable pointing at the PAID collection FAILS', () => {
+  test('a LOCAL file whose name does not match the role FAILS before any id is trusted', () => {
+    // The other half of the swap: the binding asserts the LOCAL name too, so a mis-copied file
+    // cannot be published under a role it does not belong to. This was previously covered by
+    // pointing the sandbox role at the paid file.
     const remote = serverShaped(PAID);
     assert.throws(() => assertTargetBinding({
-      entry: sandboxEntry, local: localShaped(SANDBOX), remote, configuredId: remote.collection.info._postman_id,
-    }), (e) => /points at a collection named "OnChainRisk Paid API"/.test(e.message));
+      entry: paidEntry, local: localShaped('OnChainRisk Sandbox API'), remote,
+      configuredId: remote.collection.info._postman_id,
+    }), (e) => e instanceof SyncError && /OnChainRisk Sandbox API/.test(e.message));
   });
 
   test('an unrelated existing editable collection FAILS', () => {
@@ -396,30 +408,68 @@ describe('first-activation gate', () => {
     const { readFileSync } = await import('node:fs');
     const wf = readFileSync(new URL('../../workflows/publish-postman.yml', import.meta.url), 'utf8');
     const src = readFileSync(new URL('../postman-sync.mjs', import.meta.url), 'utf8');
-    const publishJob = wf.slice(wf.indexOf('  publish:'), wf.indexOf('  verify-only:'));
+    const publishJob = wfJob(wf, 'publish');
     assert.match(publishJob, /vars\.POSTMAN_AUTOPUBLISH_ENABLED == 'true'/);
     assert.match(src, /autopublishEnabled/);
     // and the read-only job is deliberately NOT gated on it
-    const verifyJob = wf.slice(wf.indexOf('  verify-only:'));
+    const verifyJob = wfJob(wf, 'verify-only');
     assert.equal(verifyJob.includes("vars.POSTMAN_AUTOPUBLISH_ENABLED == 'true'"), false);
+  });
+
+  /*
+   * The read-only `verify` job must also be main-only. Nothing asserted that: a mutation removing
+   * `github.ref == 'refs/heads/main'` from verify-only left the whole suite green. It matters
+   * because verify reads the three CONFIGURED target ids and compares them against the artifacts
+   * at the dispatched ref -- run from an arbitrary branch it would report ACTION=UPDATE against
+   * whatever that branch happens to contain, which is a misleading answer about production.
+   * (`inventory` and `inspect-environments` are deliberately NOT main-only: they take no
+   * configured target id, so there is no production claim to get wrong.)
+   */
+  test('the verify job is main-only, and dispatch-only', async () => {
+    const { readFileSync } = await import('node:fs');
+    const wf = readFileSync(new URL('../../workflows/publish-postman.yml', import.meta.url), 'utf8');
+    const cond = wfJob(wf, 'verify-only').match(/if: (.*)/)[1];
+    assert.match(cond, /github\.ref == 'refs\/heads\/main'/);
+    assert.match(cond, /github\.event_name == 'workflow_dispatch'/);
+    assert.match(cond, /inputs\.mode == 'verify'/);
+    // a push must not reach it either
+    assert.equal(/event_name == 'push'/.test(cond), false);
   });
 
   test('the publish job passes the activation variable through to the script', async () => {
     const { readFileSync } = await import('node:fs');
     const wf = readFileSync(new URL('../../workflows/publish-postman.yml', import.meta.url), 'utf8');
-    const publishJob = wf.slice(wf.indexOf('  publish:'), wf.indexOf('  verify-only:'));
+    const publishJob = wfJob(wf, 'publish');
     assert.match(publishJob, /POSTMAN_AUTOPUBLISH_ENABLED: \$\{\{ vars\.POSTMAN_AUTOPUBLISH_ENABLED \}\}/);
   });
 
   test('a pull request can never publish, whatever the variable says', async () => {
     const { readFileSync } = await import('node:fs');
     const wf = readFileSync(new URL('../../workflows/publish-postman.yml', import.meta.url), 'utf8');
-    const publishJob = wf.slice(wf.indexOf('  publish:'), wf.indexOf('  verify-only:'));
+    const publishJob = wfJob(wf, 'publish');
     assert.match(publishJob, /github\.ref == 'refs\/heads\/main'/);
     assert.equal(publishJob.includes('pull_request'), false);
     // the validation job — the only one a pull request runs — never sees the secret
-    const validateJob = wf.slice(wf.indexOf('  validate:'), wf.indexOf('  publish:'));
+    const validateJob = wfJob(wf, 'validate');
     assert.equal(validateJob.includes('secrets.'), false, 'the PR-reachable job must not reference any secret');
     assert.equal(wf.slice(wf.indexOf('  publish:')).includes('secrets.POSTMAN_API_KEY'), true);
   });
 });
+
+
+/*
+ * A job's own block, bounded by the NEXT job key rather than by a named sibling. These
+ * assertions used to slice `publish:` -> `verify-only:`; when the read-only `inventory` and
+ * `inspect-environments` jobs were inserted between them that span silently grew to three jobs,
+ * so every guard assertion using it began measuring the wrong region while still passing. A
+ * guard has to be bounded by structure, not by whichever job happens to come next.
+ * Declared at the end of the file deliberately: function declarations hoist, and this keeps the
+ * import block untouched.
+ */
+function wfJob(wf, name) {
+  const start = wf.indexOf(`\n  ${name}:\n`);
+  if (start === -1) throw new Error(`job ${name} not found in the workflow`);
+  const rest = wf.slice(start + 1);
+  const next = rest.search(/\n  [a-z][a-z0-9-]*:\n/);
+  return next === -1 ? rest : rest.slice(0, next);
+}

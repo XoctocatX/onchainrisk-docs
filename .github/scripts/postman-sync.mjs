@@ -46,27 +46,63 @@ const POSTMAN_API = 'https://api.postman.com';
 export const ACTIVATION_VAR = 'POSTMAN_AUTOPUBLISH_ENABLED';
 
 /**
- * The two collections this repository publishes, and the name each target MUST have.
+ * THE THREE TARGETS this repository publishes — ONE collection and TWO environments — and the
+ * name each one MUST have.
  *
  * `expectedName` is a SAFETY ASSERTION, never a lookup: the script will not search Postman for a
- * collection with this name, and will not switch to a different id if the configured one points
- * somewhere else. It exists so that a swapped or mistyped variable fails instead of overwriting
- * an unintended collection.
+ * collection or environment with this name, and will not switch to a different id if the
+ * configured one points somewhere else. It exists so that a swapped or mistyped variable fails
+ * instead of overwriting an unintended target — and with two environments that matters as much
+ * as it did back when there were two collections: publishing the production placeholder over the
+ * sandbox one would hand a sandbox reader a live-key placeholder.
  */
-export const COLLECTIONS = [
+/**
+ * THE THREE CANONICAL TARGETS (#748 cutover).
+ *
+ * This was two collections, one per tier, which is a statement that paid and sandbox are two
+ * different integrations. They are one integration with two credentials, so the published shape
+ * is ONE collection used with EITHER environment — and the publisher now models exactly that:
+ *
+ *   collection             OnChainRisk API            45 requests, bearer {{api_key}}
+ *   environment            OnChainRisk Production     api_key = ocr_live_* · tier = production
+ *   environment            OnChainRisk Sandbox        api_key = ocr_test_* · tier = sandbox
+ *
+ * Each is INDEPENDENTLY verifiable: its own configured id, its own remote identity, its own
+ * local and remote normalized hash, and its own ACTION. A write to one never implies a write to
+ * another, and `verify` issues none.
+ *
+ * The two retired collection id variables are deliberately NOT read any more. The old sandbox
+ * cloud collection is retained and deprecated rather than deleted — users may have imported or
+ * forked it — but it is not one of the three canonical artifacts and this script does not touch
+ * it. Its deprecation is a separate, bounded write under its own gate.
+ */
+export const TARGETS = [
   {
-    role: 'paid',
-    file: 'paid-collection.json',
-    idVar: 'POSTMAN_PAID_COLLECTION_ID',
-    expectedName: 'OnChainRisk Paid API',
+    kind: 'collection',
+    role: 'collection',
+    file: 'onchainrisk_api_collection.json',
+    idVar: 'POSTMAN_COLLECTION_ID',
+    expectedName: 'OnChainRisk API',
   },
   {
-    role: 'sandbox',
-    file: 'onchainrisk_sandbox_api_collection.json',
-    idVar: 'POSTMAN_SANDBOX_COLLECTION_ID',
-    expectedName: 'OnChainRisk Sandbox API',
+    kind: 'environment',
+    role: 'production-environment',
+    file: 'production.postman_environment.json',
+    idVar: 'POSTMAN_PRODUCTION_ENVIRONMENT_ID',
+    expectedName: 'OnChainRisk Production',
+  },
+  {
+    kind: 'environment',
+    role: 'sandbox-environment',
+    file: 'sandbox.postman_environment.json',
+    idVar: 'POSTMAN_SANDBOX_ENVIRONMENT_ID',
+    expectedName: 'OnChainRisk Sandbox',
   },
 ];
+
+/** The collection target, for the places that are collection-specific by nature. */
+export const COLLECTIONS = TARGETS.filter((t) => t.kind === 'collection');
+export const ENVIRONMENTS = TARGETS.filter((t) => t.kind === 'environment');
 
 /**
  * POSTMAN-MANAGED IDENTITY, modelled by POSITION rather than by key name.
@@ -116,11 +152,17 @@ const IDENTITY = {
  * Server-generated metadata, normalized for comparison and deliberately NOT echoed back.
  *
  * R4: a current GET returns `createdAt` / `updatedAt` on folders, requests and response examples
- * as well as on the collection. Neither checked-in collection carries them structurally (the
- * four `createdAt` strings in the paid collection are inside response-example BODIES, which is
- * our content), so every ordinary GET differed from the canonical file purely by server
- * timestamps — a false ACTION=UPDATE, and then a post-PUT verification that could never match
- * because the verifying GET added them again.
+ * as well as on the collection. The checked-in collection carries none of them structurally, so
+ * every ordinary GET differed from the canonical file purely by server timestamps — a false
+ * ACTION=UPDATE, and then a post-PUT verification that could never match because the verifying
+ * GET added them again.
+ *
+ * The POSITION matters as much as the key name, and that is why this table is per-position rather
+ * than a flat denylist: back when the paid collection was hand-authored it carried four
+ * `createdAt` strings INSIDE response-example bodies, which is our content and must survive
+ * normalization. The generated collection has no saved examples at all, so it carries none today
+ * — but a flat "delete anything called createdAt" would be wrong the moment one returns, and the
+ * position-aware behaviour is proven on a synthetic collection in the server-shape suite.
  */
 const SERVER_METADATA = {
   collectionInfo: ['owner', 'fork', 'createdAt', 'updatedAt', 'lastUpdatedBy', 'lastRevision'],
@@ -684,9 +726,13 @@ function keyable(arr, field) {
  *
  * The strategy is decided ONCE FOR THE PAIR, by the caller, and applied to both sides. Indexing
  * each side independently produced incoherent output when one side was keyable and the other was
- * not: the paid collection genuinely has two events with `listen: "test"` on one request, so a
- * remote with a single `test` event reported `event[0]`/`event[1]` as ADDED *and*
- * `event[test]` as REMOVED — describing one edit as three unrelated ones.
+ * not — the incident that prompted this: the hand-authored paid collection carried two events
+ * with `listen: "test"` on one request, so a remote with a single `test` event reported
+ * `event[0]`/`event[1]` as ADDED *and* `event[test]` as REMOVED, describing one edit as three
+ * unrelated ones. The generated collection emits exactly one test event per scripted request, so
+ * no published artifact is un-keyable this way today; the pair-wise rule stays because an
+ * un-keyable array is a shape Postman can return at any time, and the safe-diff suite constructs
+ * one rather than relying on a published file to contain it.
  */
 function indexArray(arr, field, semantic) {
   if (semantic) {
@@ -825,10 +871,174 @@ export function readLocal(file) {
   } catch (e) {
     throw new SyncError(`${file} is not readable as JSON: ${e.message}`);
   }
-  if (!parsed?.info?.name || !Array.isArray(parsed.item)) {
-    throw new SyncError(`${file} does not look like a Postman collection (missing info.name or item[])`);
+  // TWO shapes are published now, and each is shape-checked as itself rather than one being
+  // waved through: a COLLECTION has info.name and item[], an ENVIRONMENT has name and values[].
+  // A file that is neither is rejected, so a truncated or wrong-kind document cannot reach the
+  // comparison and read as "everything differs".
+  const isCollection = Boolean(parsed?.info?.name) && Array.isArray(parsed.item);
+  const isEnvironment = typeof parsed?.name === 'string' && Array.isArray(parsed.values);
+  if (!isCollection && !isEnvironment) {
+    throw new SyncError(
+      `${file} is neither a Postman collection (info.name + item[]) nor a Postman environment `
+      + '(name + values[])',
+    );
   }
   return parsed;
+}
+
+// ───────────────────────────── environments ─────────────────────────────
+//
+// An environment document is far simpler than a collection — a name and a flat list of
+// {key, value, type, enabled, description} — so it gets its own small, explicit path rather
+// than being forced through machinery built for folders, requests and saved examples. Every
+// safety property of the collection path is kept: identity is asserted before anything else,
+// the comparison is a normalized hash, a verify run issues no write, and a PUT is followed by a
+// re-read that must match or the run fails.
+
+/**
+ * What Postman owns on an environment. `id` is the cloud identity; the rest is server metadata
+ * or export bookkeeping. Normalizing them away is what stops every ordinary GET from reporting a
+ * false ACTION=UPDATE — the same defect that stalled the first collection publish, in the shape
+ * an environment takes.
+ */
+export const ENVIRONMENT_MANAGED = [
+  'id', 'uid', 'owner', 'createdAt', 'updatedAt', 'isPublic',
+  '_postman_variable_scope', '_postman_exported_at', '_postman_exported_using',
+];
+
+/**
+ * The comparable content of an environment: its NAME and its variables, keyed by variable name
+ * so Postman's ordering cannot read as a change. A variable's `value` participates in full —
+ * these are published PLACEHOLDERS, and a placeholder silently replaced by a real credential is
+ * precisely what a reviewer needs the hash to catch.
+ */
+export function normalizeEnvironmentForCompare(doc) {
+  const d = clone(doc?.environment ?? doc);
+  for (const k of ENVIRONMENT_MANAGED) delete d[k];
+  const values = (d.values ?? []).map((v) => {
+    const out = { ...v };
+    delete out.id;
+    return out;
+  });
+  values.sort((a, b) => (String(a.key) < String(b.key) ? -1 : 1));
+  return { name: d.name, values };
+}
+
+/** Stable, key-order-independent hash of an environment's comparable content. */
+export function environmentContentHash(doc) {
+  const sortKeys = (v) => {
+    if (Array.isArray(v)) return v.map(sortKeys);
+    if (!isObj(v)) return v;
+    return Object.keys(v).sort().reduce((a, k) => { a[k] = sortKeys(v[k]); return a; }, {});
+  };
+  return createHash('sha256')
+    .update(JSON.stringify(sortKeys(normalizeEnvironmentForCompare(doc)))).digest('hex');
+}
+
+/**
+ * Bind the role to the target BEFORE anything else is considered — the same rule the collection
+ * path follows, and for the same reason: publishing the production environment over the sandbox
+ * one would hand every reader a live-key placeholder where they expected a test one.
+ */
+export function assertEnvironmentBinding({ entry, local, remote, configuredId }) {
+  const r = remote?.environment ?? remote ?? {};
+  if (local.name !== entry.expectedName) {
+    throw new SyncError(
+      `${entry.file} is named "${local.name}", expected "${entry.expectedName}". The file and the `
+      + 'role must agree before any id is trusted.',
+    );
+  }
+  if (r.name !== entry.expectedName) {
+    throw new SyncError(
+      `${entry.idVar} points at a Postman environment named "${r.name}", but ${entry.role} `
+      + `expects "${entry.expectedName}". Refusing to write: the configured id is bound to the `
+      + 'wrong environment.',
+    );
+  }
+  if (!identityConsistent(configuredId, { id: r.id, uid: r.uid })) {
+    throw new SyncError(
+      `${entry.idVar} (${fingerprint(configuredId)}) does not match the remote environment `
+      + `identity (id ${fingerprint(r.id ?? '')} / uid ${fingerprint(r.uid ?? '')}).`,
+    );
+  }
+  return { id: r.id, uid: r.uid };
+}
+
+async function syncEnvironment(entry, { apiKey, publish, log, env = process.env }) {
+  const local = readLocal(entry.file);
+  const configuredId = env[entry.idVar];
+  if (!configuredId) {
+    throw new SyncError(
+      `${entry.idVar} is not set. Configure it as a repository variable holding the Postman cloud `
+      + `environment id. The \`id\` inside ${entry.file} is a document identifier and is NOT a `
+      + 'cloud id — publication will not guess one, and will not create one.',
+    );
+  }
+
+  const remote = await postman('GET', `/environments/${configuredId}`, { apiKey });
+  const { id, uid } = assertEnvironmentBinding({ entry, local, remote, configuredId });
+
+  const localHash = environmentContentHash(local);
+  const remoteHash = environmentContentHash(remote);
+  const action = remoteHash === localHash ? 'NOOP' : 'UPDATE';
+  const localKeys = normalizeEnvironmentForCompare(local).values.map((v) => v.key);
+
+  log(`  role                 : ${entry.role}`);
+  log(`  kind                 : environment`);
+  log(`  source file          : ${entry.file}`);
+  log(`  environment name     : ${entry.expectedName} (asserted on both sides)`);
+  log(`  configured id        : ${fingerprint(configuredId)}`);
+  log(`  remote identity      : id ${fingerprint(id ?? '')} / uid ${fingerprint(uid ?? '')}`);
+  log(`  repository sha       : ${env.GITHUB_SHA ?? '(local run)'}`);
+  log(`  local normalized sha : ${localHash}`);
+  log(`  remote normalized sha: ${remoteHash}`);
+  log(`  variables (local)    : ${localKeys.length} — ${localKeys.join(', ')}`);
+  log(`  autopublish enabled  : ${autopublishEnabled(env) ? 'true' : `no (${ACTIVATION_VAR}=${env[ACTIVATION_VAR] ?? '(unset)'})`}`);
+  log(`  ACTION               : ${action}`);
+
+  if (action === 'NOOP') {
+    log('  remote already matches the reviewed local file; no PUT issued.');
+    return { role: entry.role, action, put: false, verified: true, localHash, remoteHash };
+  }
+
+  // Show a reviewer WHICH variables differ, by key — never a value, because a value may be a
+  // placeholder a reader is about to be told to replace with a real credential.
+  const l = new Map(normalizeEnvironmentForCompare(local).values.map((v) => [v.key, v]));
+  const r = new Map(normalizeEnvironmentForCompare(remote).values.map((v) => [v.key, v]));
+  for (const k of [...new Set([...l.keys(), ...r.keys()])].sort()) {
+    if (!r.has(k)) log(`    + ${safeKey(k)} (local only)`);
+    else if (!l.has(k)) log(`    - ${safeKey(k)} (remote only)`);
+    else if (JSON.stringify(l.get(k)) !== JSON.stringify(r.get(k))) log(`    ~ ${safeKey(k)} differs`);
+  }
+
+  if (!publish) {
+    log('  verify-only run: a PUT would be required. Not issuing it.');
+    return { role: entry.role, action, put: false, verified: null, localHash, remoteHash };
+  }
+  if (!autopublishEnabled(env)) {
+    throw new SyncError(
+      `${entry.role}: a write is required but ${ACTIVATION_VAR} is not exactly 'true' `
+      + `(currently ${env[ACTIVATION_VAR] ?? '(unset)'}).`,
+    );
+  }
+
+  // The PUT keeps the remote's own cloud id and carries our name and values. No create path.
+  const payload = { ...normalizeEnvironmentForCompare(local), id };
+  await postman('PUT', `/environments/${configuredId}`, { apiKey, body: { environment: payload } });
+
+  // An HTTP 200 is not publication success. Re-read and compare.
+  const after = await postman('GET', `/environments/${configuredId}`, { apiKey });
+  const afterHash = environmentContentHash(after);
+  log(`  remote sha after PUT : ${afterHash}`);
+  if (afterHash !== localHash) {
+    throw new SyncError(
+      `${entry.role}: the PUT returned 200 but the remote does not match the reviewed file `
+      + `(local ${localHash}, remote ${afterHash}). Treat the remote as HALF-WRITTEN and inspect `
+      + 'it before any retry.',
+    );
+  }
+  log('  POSTMAN_REMOTE_MATCH_LOCAL = YES');
+  return { role: entry.role, action, put: true, verified: true, localHash, remoteHash: afterHash };
 }
 
 // ───────────────────────────── driver ─────────────────────────────
@@ -911,15 +1121,52 @@ export async function main(argv = process.argv.slice(2), log = console.log, env 
   const mode = argv.includes('--publish') ? 'publish' : argv.includes('--selftest') ? 'selftest' : 'verify';
 
   if (mode === 'selftest') {
-    for (const e of COLLECTIONS) {
+    for (const e of TARGETS) {
       const local = readLocal(e.file);
-      if (local.info.name !== e.expectedName) {
-        throw new SyncError(`${e.file} is named "${local.info.name}", expected "${e.expectedName}"`);
+      if (e.kind === 'collection') {
+        if (local.info.name !== e.expectedName) {
+          throw new SyncError(`${e.file} is named "${local.info.name}", expected "${e.expectedName}"`);
+        }
+        buildIdentityMap(local, { label: `local ${e.file}` });
+        log(`OK  ${e.file}: "${local.info.name}", ${countRequests(local)} requests, normalized sha ${contentHash(local)}`);
+      } else {
+        if (local.name !== e.expectedName) {
+          throw new SyncError(`${e.file} is named "${local.name}", expected "${e.expectedName}"`);
+        }
+        const keys = normalizeEnvironmentForCompare(local).values.map((v) => v.key);
+        if (new Set(keys).size !== keys.length) {
+          throw new SyncError(`${e.file} declares a duplicate variable key`);
+        }
+        log(`OK  ${e.file}: "${local.name}", ${keys.length} variables, normalized sha ${environmentContentHash(local)}`);
       }
-      buildIdentityMap(local, { label: `local ${e.file}` });
-      log(`OK  ${e.file}: "${local.info.name}", ${countRequests(local)} requests, normalized sha ${contentHash(local)}`);
     }
-    log('\nBoth collections parse, are named as their role expects, carry unambiguous item identities, and hash deterministically.');
+
+    // THE DROP-IN INVARIANT, asserted in the publisher itself and not only in the serving
+    // repository: the two environments must declare exactly the same variable NAMES, or the one
+    // collection cannot run on either credential without being edited.
+    const [prod, sandbox] = ENVIRONMENTS.map((e) => normalizeEnvironmentForCompare(readLocal(e.file)).values.map((v) => v.key));
+    if (JSON.stringify(prod) !== JSON.stringify(sandbox)) {
+      throw new SyncError(
+        'the two environments do not declare the same variable names, so the single collection '
+        + `cannot run on either credential unchanged (production: ${prod.join(', ')}; `
+        + `sandbox: ${sandbox.join(', ')})`,
+      );
+    }
+    // And no tier-named credential variable may exist in any of the three.
+    for (const e of TARGETS) {
+      const text = JSON.stringify(readLocal(e.file));
+      for (const forbidden of ['paid_api_key', 'sandbox_api_key']) {
+        if (text.includes(forbidden)) {
+          throw new SyncError(
+            `${e.file} references the forbidden tier-named credential variable \`${forbidden}\`. `
+            + 'One collection runs on either credential: the only credential variable is `api_key`.',
+          );
+        }
+      }
+    }
+    log(`\nOne collection and two environments parse, are named as their role expects, carry `
+      + `unambiguous identities, declare the SAME ${prod.length} variable names, use no `
+      + `tier-named credential variable, and hash deterministically.`);
     return 0;
   }
 
@@ -936,12 +1183,15 @@ export async function main(argv = process.argv.slice(2), log = console.log, env 
   }
 
   const results = [];
-  for (const e of COLLECTIONS) {
+  for (const e of TARGETS) {
     log(`\n## ${e.role}`);
-    results.push(await syncOne(e, { apiKey, publish: mode === 'publish', log, env }));
+    const sync = e.kind === 'collection' ? syncOne : syncEnvironment;
+    results.push(await sync(e, { apiKey, publish: mode === 'publish', log, env }));
   }
   log('\n## summary');
   for (const r of results) log(`  ${r.role}: ACTION=${r.action} put=${r.put} verified=${r.verified}`);
+  // A verify run must never have written. Stated as a line a reviewer can read, not inferred.
+  if (mode !== 'publish') log(`  WRITES_ISSUED = ${results.filter((r) => r.put).length} (verify issues none)`);
   return 0;
 }
 

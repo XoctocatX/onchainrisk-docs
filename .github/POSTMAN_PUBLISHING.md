@@ -1,14 +1,34 @@
 # Postman publishing
 
-How the two public collections in this repository reach Postman cloud, and what a maintainer
+How the three published artifacts in this repository reach Postman cloud, and what a maintainer
 has to configure once before the first publish.
+
+**ONE collection, used with EITHER of two environments.** The credential is the only thing that
+changes between tiers — same requests, same paths, same bodies, same client code:
+
+| Target | File | Name in Postman |
+|---|---|---|
+| collection | `onchainrisk_api_collection.json` | `OnChainRisk API` |
+| environment | `production.postman_environment.json` | `OnChainRisk Production` |
+| environment | `sandbox.postman_environment.json` | `OnChainRisk Sandbox` |
+
+Each of the three is an **independently verifiable target**: its own configured id, its own
+remote identity, its own local and remote normalized hash, and its own `ACTION`. A write to one
+never implies a write to another, and a `verify` run writes nothing at all.
+
+> This replaced two per-tier collections. That design stated that paid and sandbox are two
+> different integrations; they are one integration with two credentials. The old sandbox **cloud**
+> collection is retained and deprecated rather than deleted — people may have imported or forked
+> it — and this publisher does not touch it. Retiring it is a separate, bounded write.
 
 ## What publishes, and from where
 
 ```
 XoctocatX/onchainrisk (canonical)
   -> production served artifacts at api.onchainrisk.io
-    -> this mirror  (paid-collection.json, onchainrisk_sandbox_api_collection.json)
+    -> this mirror  (onchainrisk_api_collection.json,
+                     production.postman_environment.json,
+                     sandbox.postman_environment.json)
       -> Postman cloud
 ```
 
@@ -21,10 +41,12 @@ repository and never upstream of it.
 
 | Event | What runs |
 |---|---|
-| pull request touching a collection, the workflow or the scripts | validation only — parse, unit tests, secret-shape scan. No credential is available to the job and nothing is written to Postman. |
-| push to `main` changing `paid-collection.json` or `onchainrisk_sandbox_api_collection.json` | validation, then publish — **only if `POSTMAN_AUTOPUBLISH_ENABLED` is exactly `true`**. |
+| pull request touching a published artifact, the workflow or the scripts | validation only — parse, unit tests, secret-shape scan. No credential is available to the job and nothing is written to Postman. |
+| push to `main` changing the collection or either environment file | validation, then publish — **only if `POSTMAN_AUTOPUBLISH_ENABLED` is exactly `true`**. |
 | push to `main` changing anything else (README, CHANGELOG, integration docs, the workflow itself) | nothing. The publication trigger is path-filtered. |
-| `workflow_dispatch` on `main` with `mode: verify` | read-only: reports `NOOP` or `UPDATE` per collection and writes nothing. |
+| `workflow_dispatch` with `mode: inventory` | read-only: lists what exists in Postman cloud with one disposition per object, and writes nothing. Runs from **any** ref, and works whatever `POSTMAN_AUTOPUBLISH_ENABLED` is set to — it is how the three ids get discovered in the first place. |
+| `workflow_dispatch` with `mode: inspect-environments` | read-only: GETs up to four environment ids given as `candidate_environment_ids` and reports, per object, whether it can become a canonical target while keeping its cloud id. Writes nothing. |
+| `workflow_dispatch` on `main` with `mode: verify` | read-only: reports `NOOP` or `UPDATE` **per target** and writes nothing. |
 | `workflow_dispatch` on `main` with `mode: publish` | publishes, same as a push, and equally gated on the activation variable. |
 
 `pull_request_target` is deliberately not used, so no secret-bearing step ever runs against an
@@ -38,15 +60,18 @@ A repository **secret**:
 
 | Name | Value |
 |---|---|
-| `POSTMAN_API_KEY` | A Postman API key whose only needed right is updating the two collections below. Create it in Postman under Account Settings → API Keys. |
+| `POSTMAN_API_KEY` | A Postman API key whose only needed rights are updating the three targets below — the canonical collection and the two environments — and nothing else. Create it in Postman under Account Settings → API Keys. |
 
-Three repository **variables** (Settings → Secrets and variables → Actions → Variables):
+Four repository **variables** (Settings → Secrets and variables → Actions → Variables):
 
 | Name | Value |
 |---|---|
-| `POSTMAN_PAID_COLLECTION_ID` | The Postman **cloud** id of "OnChainRisk Paid API" |
-| `POSTMAN_SANDBOX_COLLECTION_ID` | The Postman **cloud** id of "OnChainRisk Sandbox API" |
+| `POSTMAN_COLLECTION_ID` | The Postman **cloud** id of `OnChainRisk API` |
+| `POSTMAN_PRODUCTION_ENVIRONMENT_ID` | The Postman **cloud** id of `OnChainRisk Production` |
+| `POSTMAN_SANDBOX_ENVIRONMENT_ID` | The Postman **cloud** id of `OnChainRisk Sandbox` |
 | `POSTMAN_AUTOPUBLISH_ENABLED` | `true` to allow writing. Leave unset until the activation sequence below is complete. |
+
+(Three target ids, one per published artifact, plus the activation switch.)
 
 ### Activation sequence
 
@@ -57,42 +82,131 @@ not silently enable writes. The read-only `verify` dispatch stays available thro
 how the real targets get inspected before anything is written:
 
 1. merge this workflow to `main` with `POSTMAN_AUTOPUBLISH_ENABLED` **unset**;
-2. configure `POSTMAN_API_KEY`, `POSTMAN_PAID_COLLECTION_ID`, `POSTMAN_SANDBOX_COLLECTION_ID`;
-3. run **Actions → Publish Postman collections → Run workflow → mode: `verify`** against `main`;
-4. read the output: both targets' asserted names, their identity fingerprints, the local and
-   remote normalized hashes, and `ACTION` per collection. This is the first contact with the real
-   cloud collections and it writes nothing;
+2. configure `POSTMAN_API_KEY`, `POSTMAN_COLLECTION_ID`, `POSTMAN_PRODUCTION_ENVIRONMENT_ID` and
+   `POSTMAN_SANDBOX_ENVIRONMENT_ID`;
+3. run **mode: `inventory`** to discover the ids (see above), then **mode: `verify`** against
+   `main`;
+4. read the output: all **three** targets' asserted names, their identity fingerprints, the local
+   and remote normalized hashes, and `ACTION` per target. This is the first contact with the real
+   cloud objects and it writes nothing — the run also reports `WRITES_ISSUED = 0`;
 5. only once that result is independently accepted, set `POSTMAN_AUTOPUBLISH_ENABLED=true`;
-6. then authorize a `publish` dispatch, or let the next reviewed collection change publish.
+6. then authorize a `publish` dispatch, or let the next reviewed change to a published artifact
+   publish.
 
-> The `_postman_id` inside each checked-in file (`onchainrisk-paid-v3`,
-> `onchainrisk-sandbox-v1`) is a collection-*document* identifier. It is **not** a cloud id, and
-> the publisher will not guess one: an unset or wrong variable fails the run rather than
-> discovering a same-named collection and writing to it.
+> **No checked-in file carries a cloud id.** The three ids above exist only as repository
+> variables. The generated collection carries no `info._postman_id` whatsoever — the cloud id and
+> `uid` live only on the remote, and the publisher copies the REMOTE identity into the payload it
+> writes so a PUT preserves the cloud document instead of replacing it. Each environment does
+> carry a top-level `id` (`onchainrisk-production`, `onchainrisk-sandbox`), but that is a
+> human-readable *document* identifier: comparison drops it, and the PUT substitutes the
+> configured cloud id. So a wrong variable cannot be rescued by the file's own id — and the
+> publisher will not guess one, nor create one. An unset or wrong variable fails the run rather
+> than discovering a same-named object and writing to it. There is no create path for any of the
+> three targets.
 
-To read a cloud id: open the collection in Postman → ⋯ → **Share** → **Via API**, or
-`GET https://api.postman.com/collections` with the same key and match on `name`.
+### Discovering the three ids: `mode: inventory`
+
+Do not go looking for the API key. It is already in this repository's `POSTMAN_API_KEY` secret,
+and the inventory runs inside Actions so it never has to leave secret storage:
+
+```
+Actions → Publish Postman artifacts → Run workflow → mode: inventory
+```
+
+or, to run it against this branch before anything is merged:
+
+```bash
+gh workflow run publish-postman.yml --ref <branch> -f mode=inventory
+```
+
+It prints every OnChainRisk collection and environment the key can see, with its id, a
+fingerprint of that id, and **one disposition each**:
+
+| Disposition | Meaning |
+|---|---|
+| `REUSE_AS_CANONICAL` | already named exactly as a target expects — its id is the variable value |
+| `KEEP_LEGACY_UNTOUCHED` | a retired per-tier object. Do not publish to it, do not delete it |
+| `RENAME_LATER` | an OnChainRisk object that is neither canonical nor a known retired name |
+| `CREATE_NEW_REQUIRED` | no cloud object carries this target's exact name yet |
+
+A target satisfied by two objects is reported as `AMBIGUOUS — DECIDE`, never resolved by picking
+one. The run ends with `WRITES_ISSUED = 0`.
+
+### Deciding whether an existing cloud object can be reused: `mode: inspect-environments`
+
+The inventory says what exists; this says whether it can be *adopted*. Give it the ids:
+
+```bash
+gh workflow run publish-postman.yml --ref <branch> \
+  -f mode=inspect-environments \
+  -f candidate_environment_ids=<id>,<id>
+```
+
+For each id it prints the current name, the current variable **keys** (never values — a value may
+be a placeholder someone is about to replace with a real credential), the delta against the
+reviewed local file for the role it best matches, and the mutation that reuse would require.
+
+The verdict that matters is `publisher accepts as-is`, and it is not a judgement — it is
+`assertEnvironmentBinding` in the publisher, which **refuses to write when the remote name
+differs from the role's expected name**. So an environment already named as a role expects can be
+updated in place, and one that is not cannot be written to at all until it is renamed out of
+band. That assertion is what stops the production placeholder being published over the sandbox
+environment, so the answer is "rename first", never "relax the check".
+
+A differing variable shape is *not* an obstacle: the PUT carries `{name, values}` wholesale and
+keeps the remote's own id, so an old variable set is replaced rather than merged.
+
+Candidates are paired to roles **by name, never by position** — assuming "the first id is
+production" is how a reviewed id ends up bound to the wrong tier. Ids must be UUIDs, at most four
+per run, and an empty list fails rather than falling back to a listing.
+
+It is implemented by `.github/scripts/postman-inventory.mjs`, which is read-only by construction
+rather than by configuration: its single network primitive hard-codes `method: 'GET'` and accepts
+no method argument, no write verb appears anywhere in the file, and nothing writable is imported
+from the publisher — only the target table and two pure string helpers. The job receives the API
+key and **nothing else**: no target ids, and not the activation variable. Tests drive it against
+a recording fake and assert the observed method set is exactly `{GET}`, that no request carries a
+body, that a missing key fails before any request is attempted, and — through a real offline CLI
+run — that the key never reaches a log line.
+
+The alternative, by hand: open the collection or environment in Postman → ⋯ → **Share** → **Via
+API**, or `GET https://api.postman.com/collections` and `GET
+https://api.postman.com/environments` with the same key and match on `name`.
 
 An `environment: postman` gate is declared on the publishing jobs, so a reviewer can require
 approval for the credential in Settings → Environments if desired.
 
 ## What the run tells you
 
-Before any write, for each collection, without secrets:
+Before any write, for **each of the three targets**, without secrets:
 
 ```
-  role                 : paid
-  source file          : paid-collection.json
-  collection name      : OnChainRisk Paid API
-  configured id        : len=13 sha256:6d784809 …d-id
+  role                 : collection
+  source file          : onchainrisk_api_collection.json
+  collection name      : OnChainRisk API (asserted on both sides)
+  configured id        : len=36 sha256:6d784809 …d-id
   remote identity      : id len=36 sha256:… / uid len=45 sha256:…
-  repository sha       : 49ec975c0b78
-  local normalized sha : 9f53729038e773ea…
+  repository sha       : 7825a07c4f91…   <- THIS mirror's GITHUB_SHA, not a CORE sha
+  local normalized sha : 21da25ef0fccbc96…
   remote normalized sha: 39d8014bccb87a66…
-  request count (local): 46
+  request count (local): 45
   autopublish enabled  : no (POSTMAN_AUTOPUBLISH_ENABLED=(unset))
   ACTION               : UPDATE
 ```
+
+and for an environment the same block, with the two per-kind lines differing:
+
+```
+  role                 : sandbox-environment
+  kind                 : environment
+  source file          : sandbox.postman_environment.json
+  environment name     : OnChainRisk Sandbox (asserted on both sides)
+  ...
+  variables (local)    : 15 — base_url, api_key, tier, sample_address, sample_network, …
+  ACTION               : NOOP
+```
+
+A `verify` run closes with `WRITES_ISSUED = 0`, stated rather than left to be inferred.
 
 The `remote identity` line reports the id and uid the API returned, fingerprinted the same way.
 
@@ -121,9 +235,12 @@ file is the target state.
 
 Selectors are semantic where a stable identity exists: folder name, request method plus
 normalized path, example name, event `listen`, header and variable key. Positional indexes are
-used only where neither side has a usable identity — the paid collection genuinely has two
-events with `listen: "test"` on one request, and the strategy is chosen once for the pair so one
-edit never reads as an unrelated add plus remove.
+used only where neither side has a usable identity, and the strategy is chosen once for the pair
+so one edit never reads as an unrelated add plus remove. The incident that prompted that rule:
+the hand-authored paid collection carried two events with `listen: "test"` on one request, so a
+remote with a single `test` event reported both an add and a remove for one edit. The generated
+collection emits exactly one test event per scripted request, so nothing published is un-keyable
+today — the pair-wise rule stays because Postman can return that shape at any time.
 
 **Every** externally-derived path component goes through one safety policy — folder and request
 names, the HTTP method, each URL path segment, example names, event `listen`, header / variable /
@@ -151,13 +268,13 @@ query keys, and object property keys. Nothing relies on a caller remembering to 
   decide that by looking at it.
 
 Every line the formatter emits is exactly one line, so "no control character in any emitted
-line" is a property the caller can rely on. A test asserts that a realistic diff of the two
-shipped collections contains no fingerprinted component at all, so readability is not traded
-away to satisfy the safety rules.
+line" is a property the caller can rely on. A test asserts that a realistic diff of the shipped
+collection contains no fingerprinted component at all, so readability is not traded away to
+satisfy the safety rules.
 
-It is diagnostic only: it reads the two already-normalized collections and changes nothing about
-target binding, normalization, identity preservation, ambiguity handling, the activation gate,
-the payload or post-write verification. `ACTION = NOOP` prints no diff section at all. After a write the run re-reads the
+It is diagnostic only: it reads the two already-normalized documents of a pair and changes
+nothing about target binding, normalization, identity preservation, ambiguity handling, the
+activation gate, the payload or post-write verification. `ACTION = NOOP` prints no diff section at all. After a write the run re-reads the
 collection and reports `POSTMAN_REMOTE_MATCH_LOCAL = YES`; an HTTP 200 on its own is not treated
 as success.
 
@@ -206,11 +323,18 @@ regenerates them on write; echoing them would be meaningless at best and a stale
 | item `event[].script` | `id`, `_postman_id`, `postman_id` | — |
 
 A current GET returns `createdAt` / `updatedAt` on folders, requests and response examples as
-well as on the collection. Neither checked-in collection carries them structurally — the four
-`createdAt` strings in the paid collection are inside response-example *bodies*, which is our
-content — so before they were modelled, every ordinary GET differed from the canonical file
-purely by server timestamps: a false `ACTION=UPDATE`, and then a post-write verification that
-could never match, because the verifying GET added them again. Timestamps are deliberately *not*
+well as on the collection. The checked-in collection carries none of them structurally, so
+before they were modelled, every ordinary GET differed from the canonical file purely by server
+timestamps: a false `ACTION=UPDATE`, and then a post-write verification that could never match,
+because the verifying GET added them again.
+
+The table is **per position** rather than a flat denylist, and that distinction has a history:
+back when the paid collection was hand-authored it carried four `createdAt` strings inside
+response-example *bodies*, which is our content and must survive normalization. The generated
+collection has no saved examples, so it carries none today — but a flat "delete anything called
+`createdAt`" would be wrong the moment one returns, and the position-aware behaviour is proven
+on a synthetic collection in the test suite rather than on whatever the published file happens
+to contain. Timestamps are deliberately *not*
 modelled on events or scripts, where the API does not return them.
 
 Each field is listed only where it is deliberately treated as managed. v2.1 documents `id` on
@@ -243,9 +367,12 @@ request-item position only, it drops only a zero-length array — a non-empty `r
 authored content and participates in the comparison and the hash in full — and it only ever
 removes an empty array, never adds one.
 
-Together these were every remaining difference after the first real write: on the paid
-collection, 39 requests with no authored examples plus 19 saved examples, which is exactly the
-58 paths the post-write verification reported before it correctly stopped.
+Together these were every remaining difference after the first real write: the paid collection
+then held 39 requests with no authored examples plus 19 saved examples, which is exactly the 58
+paths the post-write verification reported before it correctly stopped. The generated collection
+has a simpler shape — 45 requests, every one with a generated empty `response` array and no saved
+examples — so that arithmetic is history; the incident is preserved as a decoupled test fixture
+rather than re-derived from a live file.
 
 Collection v2.1 allows **root-level events** — collection-wide prerequest/test scripts — and the
 API returns managed ids on them exactly as it does on an item's events. They are matched by
@@ -293,18 +420,23 @@ Every one of these fails the run, with no retry against a different endpoint and
 create-new-collection fallback: a missing key, a missing collection-id variable, a target whose
 name is not this role's expectation, a configured id inconsistent with the identity the remote
 returned, a remote with no usable identity, any non-2xx from Postman, a duplicated item identity
-in either collection, a failed re-read, a post-write comparison that still differs from the local
-file, or a required write while `POSTMAN_AUTOPUBLISH_ENABLED` is not `true`.
+in the local or remote document, a failed re-read, a post-write comparison that still differs
+from the local file, or a required write while `POSTMAN_AUTOPUBLISH_ENABLED` is not `true`.
+For an environment, additionally: a local or remote name that is not that role's expectation, a
+duplicate variable key, or a document that is neither a collection (`info.name` + `item[]`) nor
+an environment (`name` + `values[]`).
 
 ## Running it locally
 
 ```bash
-# no credential needed: parses both collections and checks identity uniqueness
+# no credential needed: parses all three targets, checks identity uniqueness, and asserts the
+# drop-in invariant — the two environments declare the SAME variable names, and no artifact
+# references a tier-named credential variable. The only credential variable is `api_key`.
 node .github/scripts/postman-sync.mjs --selftest
 
-# the unit tests (local fixtures and the two real collections; no network)
+# the unit tests (local fixtures and the three real artifacts; no network)
 node --test ".github/scripts/test/*.test.mjs"
 ```
 
-`--verify` and `--publish` need `POSTMAN_API_KEY` plus both id variables in the environment.
+`--verify` and `--publish` need `POSTMAN_API_KEY` plus all three id variables in the environment.
 Prefer running those through the workflow, so the credential stays in Actions secret storage.

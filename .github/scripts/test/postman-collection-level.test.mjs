@@ -19,7 +19,7 @@ import {
 const OWNER = '31415926';
 const OTHER_OWNER = '27182818';
 const ID = 'aaaaaaaa-1111-2222-3333-444444444444';
-const PAID = 'OnChainRisk Paid API';
+const PAID = 'OnChainRisk API';
 
 /** Server-shaped collection WITH root-level events carrying managed ids. */
 function serverWithRootEvents({ name = PAID, id = ID } = {}) {
@@ -243,7 +243,7 @@ describe('the literal postman_id variant', () => {
 });
 
 describe('target identity is matched exactly when both forms are known', () => {
-  const entry = COLLECTIONS.find((c) => c.role === 'paid');
+  const entry = COLLECTIONS[0];
   const bind = (remote, configuredId) => assertTargetBinding({
     entry, local: localWithRootEvents(), remote, configuredId,
   });

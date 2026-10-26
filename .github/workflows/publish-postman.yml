@@ -1,10 +1,18 @@
-# Publish the reviewed Postman collections in this repository to Postman cloud.
+# Publish the reviewed Postman artifacts in this repository to Postman cloud.
+#
+# THREE ARTIFACTS since the #748 cutover, each independently verifiable: ONE canonical collection
+# used with EITHER of two environments. This replaced two per-tier collections, which stated that
+# paid and sandbox are different integrations; they are one integration with two credentials.
+# The old sandbox CLOUD collection is retained and deprecated rather than deleted — users may
+# have imported or forked it — and this workflow does not touch it.
 #
 # AUTHORITY. The checked-in JSON is the publication source. It arrives by mirror sync from
 # XoctocatX/onchainrisk, which already gates OpenAPI <-> Postman conformance, so this workflow
 # never regenerates a collection from OpenAPI and never treats Postman as a source of truth:
 #
 #     CORE canonical -> production served artifacts -> this mirror -> Postman cloud
+#
+# and a write to any one of the three never implies a write to another. `verify` issues none.
 #
 # TRUST MODEL. A pull request runs validation ONLY and has no access to the publishing
 # credential — the publish job is gated on `github.event_name` and on the ref being main, and
@@ -13,14 +21,19 @@
 # README, the CHANGELOG, an integration doc or this workflow does not republish anything.
 #
 # REQUIRED REPOSITORY CONFIGURATION (set once, by a maintainer):
-#   secret    POSTMAN_API_KEY                  a Postman API key with update rights on the two
-#                                              collections below, and nothing else
-#   variable  POSTMAN_PAID_COLLECTION_ID       the Postman CLOUD id of "OnChainRisk Paid API"
-#   variable  POSTMAN_SANDBOX_COLLECTION_ID    the Postman CLOUD id of "OnChainRisk Sandbox API"
+#   secret    POSTMAN_API_KEY                  a Postman API key with update rights on the three
+#                                              targets below — the canonical collection and the
+#                                              two environments — and nothing else
+#   variable  POSTMAN_COLLECTION_ID            the Postman CLOUD id of "OnChainRisk API"
+#   variable  POSTMAN_PRODUCTION_ENVIRONMENT_ID  the CLOUD id of "OnChainRisk Production"
+#   variable  POSTMAN_SANDBOX_ENVIRONMENT_ID     the CLOUD id of "OnChainRisk Sandbox"
 #   variable  POSTMAN_AUTOPUBLISH_ENABLED      the activation kill switch — see below
 #
-# The `_postman_id` values inside the checked-in files are collection-document identifiers and
-# are NOT cloud ids. The script refuses to guess one.
+# No checked-in file carries a cloud id. The generated collection carries no `info._postman_id`
+# at all -- the cloud id and uid live only on the remote, and are copied into the payload so a PUT
+# preserves the cloud document. Each environment's top-level `id` is a human-readable DOCUMENT
+# identifier: comparison drops it and the PUT substitutes the configured cloud id. The script
+# refuses to guess a cloud id, and has no create path for any of the three targets.
 #
 # ACTIVATION. Nothing can be written until POSTMAN_AUTOPUBLISH_ENABLED is EXACTLY the string
 # 'true'. Unset, empty, 'false', 'TRUE', '1' and 'yes' all leave publication disabled, and the
@@ -29,35 +42,48 @@
 # the whole time, which is how the first real target is inspected:
 #
 #   1. merge this workflow to main with POSTMAN_AUTOPUBLISH_ENABLED unset
-#   2. configure the secret and the two collection-id variables
+#   2. configure the secret and the three target-id variables: POSTMAN_COLLECTION_ID,
+#      POSTMAN_PRODUCTION_ENVIRONMENT_ID and POSTMAN_SANDBOX_ENVIRONMENT_ID
 #   3. run workflow_dispatch -> mode: verify, and read the reported target identities,
 #      normalized hashes and ACTION
 #   4. only after that result is independently accepted, set POSTMAN_AUTOPUBLISH_ENABLED=true
-#   5. then authorize a publish dispatch, or let the next reviewed collection change publish
+#   5. then authorize a publish dispatch, or let the next reviewed change to a published
+#      artifact publish
 
-name: Publish Postman collections
+name: Publish Postman artifacts
 
 on:
   pull_request:
     paths:
-      - 'paid-collection.json'
-      - 'onchainrisk_sandbox_api_collection.json'
+      - 'onchainrisk_api_collection.json'
+      - 'production.postman_environment.json'
+      - 'sandbox.postman_environment.json'
       - '.github/workflows/publish-postman.yml'
       - '.github/scripts/**'
   push:
     branches: [main]
-    # Publication path filter: ONLY a change to a published collection republishes.
+    # Publication path filter: ONLY a change to one of the three published artifacts republishes.
     paths:
-      - 'paid-collection.json'
-      - 'onchainrisk_sandbox_api_collection.json'
+      - 'onchainrisk_api_collection.json'
+      - 'production.postman_environment.json'
+      - 'sandbox.postman_environment.json'
   workflow_dispatch:
     inputs:
       mode:
-        description: 'verify = read-only comparison. publish = write when the remote differs.'
+        description: >-
+          inventory = read-only listing of what exists in Postman cloud, with a disposition per
+          object. verify = read-only comparison of the three configured targets.
+          publish = write when the remote differs.
         required: true
         default: verify
         type: choice
-        options: [verify, publish]
+        options: [inventory, inspect-environments, verify, publish]
+      candidate_environment_ids:
+        description: >-
+          inspect-environments only: up to 4 comma-separated Postman environment ids to inspect,
+          read-only. Required for that mode; ignored by every other mode.
+        required: false
+        type: string
 
 # Read-only. Publication writes to Postman, never to this repository.
 permissions:
@@ -71,7 +97,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate collections (no secrets)
+    name: Validate published artifacts (no secrets)
     runs-on: ubuntu-latest
     steps:
       - name: Check out the ref under test
@@ -85,7 +111,7 @@ jobs:
           node --version
           node -e 'const [maj] = process.versions.node.split("."); if (Number(maj) < 20) { console.error("Node 20+ required"); process.exit(1); }'
 
-      - name: Both collections parse and carry unambiguous identities
+      - name: The collection and both environments parse and carry unambiguous identities
         run: node .github/scripts/postman-sync.mjs --selftest
 
       - name: Publisher unit tests
@@ -121,10 +147,63 @@ jobs:
       - name: Publish, then verify the remote matches this repository
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
-          POSTMAN_PAID_COLLECTION_ID: ${{ vars.POSTMAN_PAID_COLLECTION_ID }}
-          POSTMAN_SANDBOX_COLLECTION_ID: ${{ vars.POSTMAN_SANDBOX_COLLECTION_ID }}
+          POSTMAN_COLLECTION_ID: ${{ vars.POSTMAN_COLLECTION_ID }}
+          POSTMAN_PRODUCTION_ENVIRONMENT_ID: ${{ vars.POSTMAN_PRODUCTION_ENVIRONMENT_ID }}
+          POSTMAN_SANDBOX_ENVIRONMENT_ID: ${{ vars.POSTMAN_SANDBOX_ENVIRONMENT_ID }}
           POSTMAN_AUTOPUBLISH_ENABLED: ${{ vars.POSTMAN_AUTOPUBLISH_ENABLED }}
         run: node .github/scripts/postman-sync.mjs --publish
+
+  inventory:
+    name: Inventory Postman cloud (read-only)
+    # Deliberately NOT gated on POSTMAN_AUTOPUBLISH_ENABLED, and deliberately NOT restricted to
+    # `main`: the inventory exists to be run BEFORE anything is configured or merged, which is
+    # when the three target ids are still unknown. It is safe from any ref because the script it
+    # runs cannot write -- see .github/scripts/postman-inventory.mjs, whose only network
+    # primitive hard-codes `method: 'GET'` and takes no method argument. Triggering a dispatch
+    # already requires write access to this repository.
+    #
+    # It cannot fall through into publication: `publish` requires mode == 'publish' (or a push to
+    # main), `verify-only` requires mode == 'verify', and neither the collection/environment id
+    # variables nor the activation variable are passed to this job at all.
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'inventory'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: postman
+    steps:
+      - name: Check out the dispatched ref
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: List collections and environments, one disposition each
+        env:
+          # The ONLY secret this job receives, and the only variable of any kind. There is no
+          # POSTMAN_AUTOPUBLISH_ENABLED here: the inventory must work whatever its value is.
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+        run: node .github/scripts/postman-inventory.mjs
+
+  inspect-environments:
+    name: Inspect candidate environments (read-only)
+    # Same safety basis as the inventory job: the script cannot write, the activation variable is
+    # neither referenced nor passed, and no target-id variable is passed either -- the ids come
+    # from the dispatch input, so inspecting a candidate can never be confused with publishing to
+    # a configured target. Bounded by construction: the script refuses a non-uuid, refuses an
+    # empty list rather than falling back to a listing, and inspects at most 4 objects.
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'inspect-environments'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: postman
+    steps:
+      - name: Check out the dispatched ref
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: GET exactly the requested environments and assess reuse
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+          POSTMAN_CANDIDATE_ENVIRONMENT_IDS: ${{ inputs.candidate_environment_ids }}
+        run: node .github/scripts/postman-inventory.mjs --inspect-environments
 
   verify-only:
     name: Verify against Postman (read-only)
@@ -143,7 +222,8 @@ jobs:
       - name: Report NOOP/UPDATE without writing
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
-          POSTMAN_PAID_COLLECTION_ID: ${{ vars.POSTMAN_PAID_COLLECTION_ID }}
-          POSTMAN_SANDBOX_COLLECTION_ID: ${{ vars.POSTMAN_SANDBOX_COLLECTION_ID }}
+          POSTMAN_COLLECTION_ID: ${{ vars.POSTMAN_COLLECTION_ID }}
+          POSTMAN_PRODUCTION_ENVIRONMENT_ID: ${{ vars.POSTMAN_PRODUCTION_ENVIRONMENT_ID }}
+          POSTMAN_SANDBOX_ENVIRONMENT_ID: ${{ vars.POSTMAN_SANDBOX_ENVIRONMENT_ID }}
           POSTMAN_AUTOPUBLISH_ENABLED: ${{ vars.POSTMAN_AUTOPUBLISH_ENABLED }}
         run: node .github/scripts/postman-sync.mjs --verify

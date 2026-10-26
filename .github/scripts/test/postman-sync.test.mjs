@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import {
   normalizeForCompare, contentHash, semanticallyEqual, normalizePath,
   buildIdentityMap, injectRemoteIds, folderKey, requestKey,
-  redact, fingerprint, readLocal, COLLECTIONS, SyncError,
+  redact, fingerprint, readLocal, COLLECTIONS, SyncError, environmentContentHash
 } from '../postman-sync.mjs';
 
 /** Minimal collection in the real shape, with Postman-managed IDs present. */
@@ -245,8 +245,8 @@ describe('10 — secrets never reach logs or errors', () => {
 describe('the repository passes the checks the workflow runs', () => {
   const SECRET_SHAPED = /PMAK-[A-Za-z0-9]{8,}|eyJ[A-Za-z0-9_-]{20,}|ocr_(live|test|sandbox)_[A-Za-z0-9]{12,}/;
   const files = [
-    'paid-collection.json', 'onchainrisk_sandbox_api_collection.json',
-    'paid.postman_environment.json', 'sandbox.postman_environment.json',
+    'onchainrisk_api_collection.json', 'onchainrisk_api_collection.json',
+    'production.postman_environment.json', 'sandbox.postman_environment.json',
     'README.md', '.github/workflows/publish-postman.yml',
     '.github/scripts/postman-sync.mjs', '.github/scripts/test/postman-sync.test.mjs',
   ];
@@ -275,19 +275,26 @@ describe('the repository passes the checks the workflow runs', () => {
 
   test('publication is gated on main and never on a pull request', () => {
     const wf = readFileSync(new URL('../../workflows/publish-postman.yml', import.meta.url), 'utf8');
-    const publish = wf.slice(wf.indexOf('  publish:'), wf.indexOf('  verify-only:'));
+    const publish = wfJob(wf, 'publish');
     assert.match(publish, /github\.ref == 'refs\/heads\/main'/);
     assert.equal(publish.includes('pull_request'), false);
   });
 
-  test('publication is narrowed to the two collection files', () => {
+  test('publication is narrowed to the three published artifact files', () => {
+    // Was "the two collection files". The published set is one collection and two environments
+    // now, and the narrowing property is unchanged: editing the README, the changelog, an
+    // integration guide or this workflow must NOT republish anything.
     const wf = readFileSync(new URL('../../workflows/publish-postman.yml', import.meta.url), 'utf8');
     const push = wf.slice(wf.indexOf('  push:'), wf.indexOf('  workflow_dispatch:'));
-    assert.match(push, /paid-collection\.json/);
-    assert.match(push, /onchainrisk_sandbox_api_collection\.json/);
+    assert.match(push, /onchainrisk_api_collection\.json/);
+    assert.match(push, /production\.postman_environment\.json/);
+    assert.match(push, /sandbox\.postman_environment\.json/);
     assert.equal(push.includes('README'), false);
     assert.equal(push.includes('integration/'), false);
     assert.equal(push.includes('CHANGELOG'), false);
+    // And the retired per-tier names must not linger as a filter that matches nothing.
+    assert.equal(push.includes('paid-collection.json'), false);
+    assert.equal(push.includes('onchainrisk_sandbox_api_collection.json'), false);
   });
 
   test('concurrency serializes publication and does not cancel mid-flight', () => {
@@ -354,7 +361,7 @@ describe('both real checked-in collections', () => {
   }
 
   test('the paid collection keeps its two explicit noauth requests through a payload build', () => {
-    const local = readLocal('paid-collection.json');
+    const local = readLocal('onchainrisk_api_collection.json');
     const out = injectRemoteIds(local, new Map(), {});
     const noauth = [];
     const walk = (nodes) => { for (const x of nodes ?? []) { if (Array.isArray(x.item)) walk(x.item); else if (x.request?.auth?.type === 'noauth') noauth.push(x.name); } };
@@ -362,7 +369,39 @@ describe('both real checked-in collections', () => {
     assert.equal(noauth.length, 2);
   });
 
-  test('the two collections are not mistaken for each other', () => {
-    assert.notEqual(contentHash(readLocal('paid-collection.json')), contentHash(readLocal('onchainrisk_sandbox_api_collection.json')));
+  test('the two ENVIRONMENTS are not mistaken for each other', () => {
+    // There were two collections to tell apart. There is one now — so the pair that CAN be
+    // confused, and whose confusion would actually hurt, is the two environments: publishing the
+    // production placeholder over the sandbox one hands a sandbox reader an `ocr_live_*`
+    // placeholder. Their hashes must differ, and the difference must be the credential and the
+    // tier, not an accident of ordering.
+    const prod = readLocal('production.postman_environment.json');
+    const sandbox = readLocal('sandbox.postman_environment.json');
+    assert.notEqual(environmentContentHash(prod), environmentContentHash(sandbox));
+    const valueOf = (doc, key) => doc.values.find((v) => v.key === key).value;
+    assert.match(valueOf(prod, 'api_key'), /^ocr_live_/);
+    assert.match(valueOf(sandbox, 'api_key'), /^ocr_test_/);
+    assert.equal(valueOf(prod, 'tier'), 'production');
+    assert.equal(valueOf(sandbox, 'tier'), 'sandbox');
+    // …while the NAMES are identical, which is what lets one collection run on either.
+    assert.deepEqual(prod.values.map((v) => v.key), sandbox.values.map((v) => v.key));
   });
 });
+
+
+/*
+ * A job's own block, bounded by the NEXT job key rather than by a named sibling. These
+ * assertions used to slice `publish:` -> `verify-only:`; when the read-only `inventory` and
+ * `inspect-environments` jobs were inserted between them that span silently grew to three jobs,
+ * so every guard assertion using it began measuring the wrong region while still passing. A
+ * guard has to be bounded by structure, not by whichever job happens to come next.
+ * Declared at the end of the file deliberately: function declarations hoist, and this keeps the
+ * import block untouched.
+ */
+function wfJob(wf, name) {
+  const start = wf.indexOf(`\n  ${name}:\n`);
+  if (start === -1) throw new Error(`job ${name} not found in the workflow`);
+  const rest = wf.slice(start + 1);
+  const next = rest.search(/\n  [a-z][a-z0-9-]*:\n/);
+  return next === -1 ? rest : rest.slice(0, next);
+}

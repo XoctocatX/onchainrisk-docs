@@ -1,0 +1,1700 @@
+{
+  "info": {
+    "name": "OnChainRisk API",
+    "description": "ONE collection for the whole API, used with EITHER the **OnChainRisk Production** or the **OnChainRisk Sandbox** environment. The credential is the only thing that changes: same requests, same paths, same bodies, same client code. Load an environment, put your key in `api_key`, and run.\n\nBoth environments declare exactly the same variable NAMES, so nothing here can depend on which one is loaded. Where the two tiers genuinely behave differently — the two Telegram operations, which a sandbox credential is documented to refuse — the test script reads `tier` and asserts the right outcome. The requests themselves never branch.\n\nSandbox requests reach the same paths and return the same shapes; execution is simulated or served from committed fixtures, and nothing is billed. See `integration/capability-matrix.md` for the per-operation mode.\n\nThe reference document is https://api.onchainrisk.io/openapi.yaml for production and https://api.onchainrisk.io/openapi-sandbox.yaml for the sandbox — two views of the same 45 operations.\n\n**Public Share Links (no auth).** `GET /api/share/{token}` and `GET /api/share/{token}/graph` send no `Authorization` header: the share token *is* the credential, and the report owner gave you that token. Do not add a paid key to them: the remaining operations inherit the collection bearer, and these two deliberately override it to `noauth`.\n\nFolders group by tag, and they are safe day-to-day except where a request says otherwise: `Analysis`, `Multi-Chain`, `Account`, `AI Investigation`, `Watchlist`, `Labels`, `Notifications`, `Graph`, `Sharing`, `Saved Reports`.\n\nGenerated from `web/api/contract/*` by `scripts/generate-postman-collection.mjs`. Do not edit by hand — a hand edit is overwritten by the next generation and fails the canonical check.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{api_key}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [],
+  "item": [
+    {
+      "name": "Analysis",
+      "item": [
+        {
+          "name": "Analyze address risk",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check"
+              ]
+            },
+            "description": "Analyze address risk\n\nAnswers **200** with the finished report when the scan completes inline, or **202** with `reportId` and `status` when it goes asynchronous — read the status code, not the body shape. On 202, poll `GET /api/v1/check/status/{reportId}` until `complete` or `failed`; this request captures the id for you. Validation failures are always **422** with `success: false` and `error.code = VALIDATION_ERROR`.\n\nSandbox: the documented FIXTURE input is `0x0000000000000000000000000000000000735735` on `eth` — the value this environment already supplies — and returns a deterministic fixture report. Two further documented inputs exercise the async lifecycle instead: `0x0000000000000000000000000000000000735a01` (completes) and `0x0000000000000000000000000000000000735f01` (fails). Paste one into `sample_address` to take that path. Every other address is SIMULATED.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"{{sample_address}}\"\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ok = [200, 202].includes(pm.response.code);",
+                  "pm.test('200 inline or 202 async', () => pm.expect(ok).to.be.true);",
+                  "if (ok) {",
+                  "  const d = pm.response.json().data;",
+                  "  if (d && d.reportId) {",
+                  "    pm.collectionVariables.set('sample_report_id', d.reportId);",
+                  "    pm.test('reportId captured for the status and fetch requests', () => pm.expect(d.reportId).to.be.a('string'));",
+                  "  }",
+                  "}",
+                  "if (pm.response.code === 422) {",
+                  "  const e = pm.response.json();",
+                  "  pm.test('validation is the stable 422 envelope', () => {",
+                  "    pm.expect(e.success).to.equal(false);",
+                  "    pm.expect(e.error.code).to.equal('VALIDATION_ERROR');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Analyze address risk (GET)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check/:address?network={{sample_network}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check",
+                ":address"
+              ],
+              "query": [
+                {
+                  "key": "network",
+                  "value": "{{sample_network}}",
+                  "disabled": true
+                }
+              ],
+              "variable": [
+                {
+                  "key": "address",
+                  "value": "{{sample_address}}"
+                }
+              ]
+            },
+            "description": "Analyze address risk (GET)"
+          },
+          "response": []
+        },
+        {
+          "name": "Async scan status (polling)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check/status/:reportId",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check",
+                "status",
+                ":reportId"
+              ],
+              "variable": [
+                {
+                  "key": "reportId",
+                  "value": "{{sample_report_id}}"
+                }
+              ]
+            },
+            "description": "Async scan status (polling)\n\nLightweight polling for the async path. Lifecycle: `queued` → `analyzing` → `complete` | `failed`. Does NOT consume quota. Poll every ~5 seconds; a heavy address typically takes 1–5 minutes. `sample_report_id` is captured for you by `POST /api/v1/check` when that call answers 202."
+          },
+          "response": []
+        },
+        {
+          "name": "Fetch a saved report by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/reports/:id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "reports",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{sample_report_id}}"
+                }
+              ]
+            },
+            "description": "Fetch a saved report by id"
+          },
+          "response": []
+        },
+        {
+          "name": "Deep analysis (peel chain detection)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/check/deep",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "check",
+                "deep"
+              ]
+            },
+            "description": "Deep analysis (peel chain detection)\n\nSandbox: a deterministic fixture peel chain with no billing. The sandbox values are **synthetic** and are not an analysis of the address you passed.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"{{sample_network}}\"\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Token security check (honeypot detection)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/token/check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "token",
+                "check"
+              ]
+            },
+            "description": "Token security check (honeypot detection)\n\nTakes an ERC-20 **contract** address, not a wallet — `sample_token_address` supplies one. Sandbox: deterministic fixture sections, including a documented input whose `honeypot.status` is non-ok, so the non-actionable branch is exercisable.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"{{sample_token_address}}\",\n  \"network\": \"{{sample_network}}\"\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Token check (SSE streaming)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/token/check/stream",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "token",
+                "check",
+                "stream"
+              ]
+            },
+            "description": "Token check (SSE streaming)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"{{sample_token_address}}\",\n  \"network\": \"{{sample_network}}\"\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Block MEV analysis",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/block/analyze",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "block",
+                "analyze"
+              ]
+            },
+            "description": "Block MEV analysis\n\nTakes a block height (`sample_block`), sent as a JSON NUMBER — a quoted value is rejected. This call SAVES the report and returns its public id, which this request captures into `sample_block_report_id` for the two saved-report requests. Sandbox: a deterministic fixture MEV result with no billing, also saved.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blockNumber\": {{sample_block}},\n  \"network\": \"{{sample_network}}\"\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "// The analyze call SAVES the report. Capturing its public id here is what makes the resolve",
+                  "// and fetch below runnable by UUID rather than through the short-lived correlation cache.",
+                  "if (d && d.reportPublicId) pm.collectionVariables.set('sample_block_report_id', String(d.reportPublicId));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Multi-Chain",
+      "item": [
+        {
+          "name": "Quick multi-chain scan",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/multichain/scan",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "multichain",
+                "scan"
+              ]
+            },
+            "description": "Quick multi-chain scan\n\nAUTO-SAVES the report and returns its public UUID as both `reportId` and `reportPublicId`. This request captures it into `sample_multichain_report_id`, which is what makes the saved-report resolve and fetch runnable — the alternative, correlating by address, depends on a short-lived cache. Sandbox: a deterministic fixture, also saved, so the saved-report operations are exercisable without a paid credential.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"{{sample_address}}\"\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "// The scan AUTO-SAVES, and both fields carry the saved report's UUID. Capturing it here is",
+                  "// what makes the saved-report resolve and GET runnable without the address-correlation cache.",
+                  "const saved = d && (d.reportPublicId || d.reportId);",
+                  "if (saved) pm.collectionVariables.set('sample_multichain_report_id', String(saved));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Full multi-chain risk analysis",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/multichain/analyze",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "multichain",
+                "analyze"
+              ]
+            },
+            "description": "Full multi-chain risk analysis\n\nThe full cross-chain analysis. `networks` must be NON-EMPTY — an empty array is 422 — so this request sends `[\"{{sample_network}}\"]`; add more slugs from the capability matrix. Answers **202** with an INTEGER `reportId`, captured into `sample_multichain_analysis_id` for the progress poll. That integer is NOT a report id: the saved multi-chain report is a UUID, and the scan above captures that one. Costs more than a single-chain check.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"networks\": [\n    \"{{sample_network}}\"\n  ]\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// 202 is the ONLY passing result for the generated default. Tolerating 422 would let a",
+                  "// regression back to `networks: []` run green, which is the exact failure the non-empty",
+                  "// default exists to prevent. No other code is tolerated either: the contract declares 202",
+                  "// and 422 for this operation, so anything else is a surprise worth failing on.",
+                  "pm.test('202 accepted — a 422 here means the request body regressed', () => {",
+                  "  pm.expect(pm.response.code, 'the generated default must be runtime-valid').to.not.equal(422);",
+                  "  pm.expect(pm.response.code).to.equal(202);",
+                  "});",
+                  "const d = (pm.response.json() || {}).data;",
+                  "// The INTEGER analysis id. Only the progress poll consumes it; it is NOT a report id.",
+                  "if (d && d.reportId !== undefined) pm.collectionVariables.set('sample_multichain_analysis_id', String(d.reportId));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Poll analysis progress",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/multichain/analyze/:reportId",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "multichain",
+                "analyze",
+                ":reportId"
+              ],
+              "variable": [
+                {
+                  "key": "reportId",
+                  "value": "{{sample_multichain_analysis_id}}"
+                }
+              ]
+            },
+            "description": "Poll analysis progress"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Account",
+      "item": [
+        {
+          "name": "Get current API usage and quota",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/usage",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "usage"
+              ]
+            },
+            "description": "Get current API usage and quota\n\nYour quota, rate-limit headroom and `key_type`. The cheapest way to confirm a credential works and to see which tier it selects — `key_type` is how you tell."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "pm.test('reports the tier this credential selects', () => pm.expect(d.key_type).to.be.a('string'));",
+                  "const tier = pm.environment.get('tier');",
+                  "if (tier) pm.test('key_type agrees with the loaded environment', () => {",
+                  "  pm.expect(d.key_type === 'sandbox').to.equal(tier === 'sandbox');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List webhook delivery audit (#41 Phase 1)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/webhook/deliveries?status=delivering&limit=&cursor=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "webhook",
+                "deliveries"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "delivering",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List webhook delivery audit (#41 Phase 1)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "AI Investigation",
+      "item": [
+        {
+          "name": "Start or continue AI investigation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/investigate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "investigate"
+              ]
+            },
+            "description": "Start or continue AI investigation\n\nStarts or continues an AI investigation. The response is a **server-sent event stream** (`text/event-stream`), not JSON: frames arrive as `data: {\"type\":\"investigation_id\",…}` and finally `data: {\"type\":\"done\",…}`. Because a Postman script cannot reliably read an id out of that, the LIST request below is what captures `sample_investigation_id` for the detail and archive requests.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"string\"\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List investigations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/investigations?limit=&offset=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "investigations"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "offset",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List investigations\n\nLists the AI investigations this credential owns, and captures the first id into `sample_investigation_id` — this is the producer for that variable, because the create above answers an event stream. Run it after the create."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const list = (body.data && (body.data.investigations || body.data.items)) || [];",
+                  "// THE declared producer for sample_investigation_id: POST /api/investigate answers SSE,",
+                  "// which a script cannot reliably read. This runs right after it in the canonical sequence.",
+                  "if (list.length && list[0].id) {",
+                  "  pm.collectionVariables.set('sample_investigation_id', String(list[0].id));",
+                  "  pm.test('captured an investigation id for the detail and archive requests', () => {",
+                  "    pm.expect(String(list[0].id)).to.not.be.empty;",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get investigation detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/investigations/:id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "investigations",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{sample_investigation_id}}"
+                }
+              ]
+            },
+            "description": "Get investigation detail"
+          },
+          "response": []
+        },
+        {
+          "name": "Archive investigation",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/investigations/:id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "investigations",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{sample_investigation_id}}"
+                }
+              ]
+            },
+            "description": "Archive investigation\n\nThis request DELETES. It is not reversible, and the id it consumes comes from the matching create request above."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Watchlist",
+      "item": [
+        {
+          "name": "List watchlist items",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/watchlist?page=&limit=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "watchlist"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List watchlist items"
+          },
+          "response": []
+        },
+        {
+          "name": "Add address to watchlist",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/watchlist",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "watchlist"
+              ]
+            },
+            "description": "Add address to watchlist\n\nCaptures the new entry id into `sample_watchlist_id`, which the update, delete and per-item alert requests consume. Paid: a monitoring job polls entries on roughly a five-minute cadence and delivers real alerts. Sandbox: simulated, no job and no delivery.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"{{sample_network}}\",\n  \"threshold_value\": 0.5,\n  \"threshold_max\": 25,\n  \"track_all\": false\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const d = pm.response.json().data;",
+                  "const id = d && (d.id || (d.item && d.item.id));",
+                  "if (id) pm.collectionVariables.set('sample_watchlist_id', String(id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update watchlist item",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/watchlist/:id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "watchlist",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{sample_watchlist_id}}"
+                }
+              ]
+            },
+            "description": "Update watchlist item",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_active\": true\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Remove from watchlist",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/watchlist/:id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "watchlist",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{sample_watchlist_id}}"
+                }
+              ]
+            },
+            "description": "Remove from watchlist\n\nThis request DELETES. It is not reversible, and the id it consumes comes from the matching create request above."
+          },
+          "response": []
+        },
+        {
+          "name": "Alerts for a single watchlist item",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/watchlist/:id/alerts?page=&limit=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "watchlist",
+                ":id",
+                "alerts"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{sample_watchlist_id}}"
+                }
+              ]
+            },
+            "description": "Alerts for a single watchlist item"
+          },
+          "response": []
+        },
+        {
+          "name": "All alerts across user's watchlist",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/alerts?page=&limit=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "alerts"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "All alerts across user's watchlist"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Labels",
+      "item": [
+        {
+          "name": "List user custom labels",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/labels?page=&limit=&search=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "labels"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List user custom labels"
+          },
+          "response": []
+        },
+        {
+          "name": "Create a custom label",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/labels",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "labels"
+              ]
+            },
+            "description": "Create a custom label\n\nCaptures the new label id into `sample_label_id` for the update and delete requests.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"label\": \"string\"\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// 200, not 201: the contract declares only 200 and createLabel() returns the normal",
+                  "// response with no status override. The watchlist create IS a 201 — they differ.",
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "const id = d && (d.id || (d.item && d.item.id));",
+                  "if (id) pm.collectionVariables.set('sample_label_id', String(id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update a label",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/labels/:id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "labels",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{sample_label_id}}"
+                }
+              ]
+            },
+            "description": "Update a label",
+            "body": {
+              "mode": "raw",
+              "raw": "{}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete a label",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/labels/:id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "labels",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{sample_label_id}}"
+                }
+              ]
+            },
+            "description": "Delete a label\n\nThis request DELETES. It is not reversible, and the id it consumes comes from the matching create request above."
+          },
+          "response": []
+        },
+        {
+          "name": "Bulk import labels",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/labels/import",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "labels",
+                "import"
+              ]
+            },
+            "description": "Bulk import labels",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"labels\": [\n    {\n      \"address\": \"{{sample_address}}\",\n      \"network\": \"{{sample_network}}\",\n      \"label\": \"Imported sample\",\n      \"category\": \"other\"\n    }\n  ]\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Export all user labels",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/labels/export",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "labels",
+                "export"
+              ]
+            },
+            "description": "Export all user labels"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "Get notification settings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/notifications/settings",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "notifications",
+                "settings"
+              ]
+            },
+            "description": "Get notification settings"
+          },
+          "response": []
+        },
+        {
+          "name": "Update notification settings",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/notifications/settings",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "notifications",
+                "settings"
+              ]
+            },
+            "description": "Update notification settings",
+            "body": {
+              "mode": "raw",
+              "raw": "{}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Send test notification",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/notifications/test",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "notifications",
+                "test"
+              ]
+            },
+            "description": "Send test notification"
+          },
+          "response": []
+        },
+        {
+          "name": "Connect Telegram chat",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/notifications/telegram/connect",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "notifications",
+                "telegram",
+                "connect"
+              ]
+            },
+            "description": "Connect Telegram chat\n\nPaid only. A **sandbox** credential is refused with **403** `sandbox_not_supported`, and that is a reviewed, documented exception rather than a gap — connecting a real Telegram account is not something a sandbox credential should be able to do. The test below asserts whichever outcome the loaded environment's tier implies.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chatId\": \"string\"\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const sandbox = pm.environment.get('tier') === 'sandbox';",
+                  "if (sandbox) {",
+                  "  pm.test('a sandbox credential is refused with 403', () => pm.response.to.have.status(403));",
+                  "  const e = pm.response.json().error || {};",
+                  "  pm.test('and says why', () => pm.expect(e.code).to.equal('sandbox_not_supported'));",
+                  "} else {",
+                  "  pm.test('a production credential is not refused as unsupported', () => pm.expect(pm.response.code).to.not.equal(403));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Disconnect Telegram",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/notifications/telegram/disconnect",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "notifications",
+                "telegram",
+                "disconnect"
+              ]
+            },
+            "description": "Disconnect Telegram\n\nPaid only, for the same reason as connect: a sandbox credential is refused with **403** `sandbox_not_supported`."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const sandbox = pm.environment.get('tier') === 'sandbox';",
+                  "if (sandbox) {",
+                  "  pm.test('a sandbox credential is refused with 403', () => pm.response.to.have.status(403));",
+                  "  const e = pm.response.json().error || {};",
+                  "  pm.test('and says why', () => pm.expect(e.code).to.equal('sandbox_not_supported'));",
+                  "} else {",
+                  "  pm.test('a production credential is not refused as unsupported', () => pm.expect(pm.response.code).to.not.equal(403));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Graph",
+      "item": [
+        {
+          "name": "Expand graph counterparties for an address (one-hop)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/graph/expand",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "graph",
+                "expand"
+              ]
+            },
+            "description": "Expand graph counterparties for an address (one-hop)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"{{sample_address}}\",\n  \"network\": \"{{sample_network}}\"\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Sharing",
+      "item": [
+        {
+          "name": "Public report view by share token",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/share/:token",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "share",
+                ":token"
+              ],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": "{{sample_share_token}}"
+                }
+              ]
+            },
+            "description": "Public report view by share token\n\nTakes **no credential** — the collection-level bearer is deliberately overridden to `noauth` here, because the contract says this operation is public. Anyone holding the token can read the report."
+          },
+          "response": []
+        },
+        {
+          "name": "Public graph view by share token",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/share/:token/graph",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "share",
+                ":token",
+                "graph"
+              ],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": "{{sample_share_token}}"
+                }
+              ]
+            },
+            "description": "Public graph view by share token\n\nTakes **no credential**, like its sibling. Treat a share token as a secret: it is the only thing standing between a reader and the report."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Saved Reports",
+      "item": [
+        {
+          "name": "Save a token security report",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/token/reports",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "token",
+                "reports"
+              ]
+            },
+            "description": "Save a token security report\n\n`reportPublicId` is OPTIONAL and is the idempotency key. Supply a stable UUID you generate yourself and a retry after a timeout answers **200** with `duplicate: true` and `charged: false` instead of saving and charging twice. Omit it and the server mints one, returned as `data.id` — that path is **not** retry-safe. `data.id` is that public UUID, which is NOT the integer `id` the list returns.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"{{sample_token_address}}\",\n  \"network\": \"{{sample_network}}\",\n  \"reportData\": {},\n  \"reportPublicId\": \"{{$guid}}\"\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List saved token reports",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/token/reports?limit=&offset=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "token",
+                "reports"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "offset",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List saved token reports"
+          },
+          "response": []
+        },
+        {
+          "name": "Save a block analysis (MEV) report",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/block/reports",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "block",
+                "reports"
+              ]
+            },
+            "description": "Save a block analysis (MEV) report\n\nRESOLVES the report `POST /api/v1/block/analyze` already saved — it does not create one, and `reportData` is ignored. Supply `reportPublicId` (preferred, and what this request sends) or `reportId`; with neither, both `blockNumber` and `network` are required and the analysis is found through a short-lived per-account cache. With nothing identifying at all the answer is 422. A truthy `name` renames the resolved report, truncated at 200 characters.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reportPublicId\": \"{{sample_block_report_id}}\"\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Resolves the report the analyze call already saved, by the id it captured.",
+                  "if (pm.response.code === 200) {",
+                  "  const d = pm.response.json().data;",
+                  "  if (d && d.reportPublicId) pm.collectionVariables.set('sample_block_report_id', String(d.reportPublicId));",
+                  "  pm.test('resolved the saved report', () => pm.expect(d.reportPublicId).to.be.a('string'));",
+                  "} else {",
+                  "  // Now DECLARED statuses, not an allowlist against a silent contract: 404 not-found/",
+                  "  // not-owned, 410 legacy-or-deleted correlation, 422 nothing identifying supplied.",
+                  "  pm.test('a documented non-success, not a surprise', () => pm.expect([404, 410, 422]).to.include(pm.response.code));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List saved block reports",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/block/reports?limit=&offset=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "block",
+                "reports"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "offset",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List saved block reports"
+          },
+          "response": []
+        },
+        {
+          "name": "Fetch a saved block (MEV) report by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/block/reports/:id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "block",
+                "reports",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{sample_block_report_id}}"
+                }
+              ]
+            },
+            "description": "Fetch a saved block (MEV) report by id"
+          },
+          "response": []
+        },
+        {
+          "name": "Resolve (and optionally rename) a saved multi-chain report",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/multichain/reports",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "multichain",
+                "reports"
+              ]
+            },
+            "description": "Resolve (and optionally rename) a saved multi-chain report\n\nRESOLVES a report the scan already saved — it does not create one (#769). Supply ONE of `reportPublicId` (preferred), `reportId` (its alias) or `address`; with none of the three the answer is 422. This request sends the id the scan above captured. A truthy `name` renames the resolved report, truncated at 200 characters.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reportPublicId\": \"{{sample_multichain_report_id}}\",\n  \"name\": \"Renamed multi-chain report\"\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Resolves the report the scan above already saved, by the id it captured.",
+                  "if (pm.response.code === 200) {",
+                  "  const d = pm.response.json().data;",
+                  "  if (d && d.reportPublicId) pm.collectionVariables.set('sample_multichain_report_id', String(d.reportPublicId));",
+                  "  pm.test('resolved the saved report', () => pm.expect(d.reportPublicId).to.be.a('string'));",
+                  "} else {",
+                  "  // 404 not-found / not-owned and the two documented 410s are legitimate when run out of",
+                  "  // order or against a credential with no saved scan. Asserting 200 unconditionally would",
+                  "  // make this request fail by design.",
+                  "  pm.test('a documented non-success, not a surprise', () => pm.expect([404, 410, 422]).to.include(pm.response.code));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List saved multi-chain reports",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/multichain/reports?limit=&offset=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "multichain",
+                "reports"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "offset",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List saved multi-chain reports"
+          },
+          "response": []
+        },
+        {
+          "name": "Fetch a saved multi-chain report by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/multichain/reports/:id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "multichain",
+                "reports",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{sample_multichain_report_id}}"
+                }
+              ]
+            },
+            "description": "Fetch a saved multi-chain report by id\n\nTakes the SAVED report's UUID — the one the scan captured — not the integer analysis id from POST /api/v1/multichain/analyze. The two are different identifiers of different things and are not interchangeable."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

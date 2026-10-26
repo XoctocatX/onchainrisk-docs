@@ -1381,6 +1381,20 @@ paths:
                   enum: [eth, bsc, btc, sol, tron, arbitrum, optimism, base, polygon, avalanche, linea, celo, moonbeam]
                 label: { type: string }
                 threshold_value: { type: number, description: "Min value to alert" }
+                threshold_max:
+                  type: number
+                  description: |
+                    Maximum transaction value to alert on. Optional; omitted means no maximum.
+                    `0` is treated as unset, i.e. also no maximum. Create-only: this field is not
+                    accepted by `PATCH /api/watchlist/{id}`, and a repeat create for the same
+                    address replaces it — omitting it there clears it.
+                track_all:
+                  type: boolean
+                  default: false
+                  description: |
+                    `false` (the default) alerts on new transactions that fall inside the
+                    threshold range. `true` alerts on every qualifying new transaction and the
+                    threshold range is not applied. Create-only, like `threshold_max`.
                 notify_email: { type: boolean, default: true }
                 notify_telegram: { type: boolean, default: false }
                 notify_webhook: { type: boolean, default: false }
@@ -1817,6 +1831,13 @@ paths:
                 notify_telegram: { type: boolean }
                 notify_webhook: { type: boolean }
                 threshold_value: { type: number }
+                is_active:
+                  type: boolean
+                  description: |
+                    Pause or resume monitoring. Omit to leave the current state alone; `true`
+                    activates, `false` deactivates. `DELETE /api/watchlist/{id}` is the ordinary
+                    way to deactivate an item, and re-creating it with `POST /api/watchlist`
+                    also reactivates it; this field is the explicit switch.
       responses:
         '200':
           description: Item updated
@@ -2028,6 +2049,31 @@ paths:
                 address: { type: string }
                 network: { type: string }
                 reportData: { type: object }
+                reportPublicId:
+                  type: string
+                  format: uuid
+                  description: |
+                    The report's public id, and the IDEMPOTENCY KEY for this call. Optional.
+
+                    **Supply a stable UUID you generate yourself whenever you need a retry-safe
+                    create.** A second request carrying a `reportPublicId` you have already
+                    used answers `200` with `duplicate: true` and `charged: false`, so a retry
+                    after a timeout cannot cost you twice.
+
+                    **If you omit it the server generates one** and returns it as `data.id`.
+                    That path is NOT retry-safe: there is no key for the server to match, so a
+                    retried request is an independent create and is charged again.
+
+                    Duplicate matching is scoped to YOUR account: an id you have used is a
+                    duplicate only for you.
+
+                    The id is nonetheless a **globally unique** public identifier. Generate a
+                    fresh UUID per report — do not deliberately reuse one that another account
+                    may already hold, and do not treat reuse across accounts as a way to create
+                    independently.
+
+                    Must be a UUID when present. A malformed or empty value is `422` and is
+                    never silently replaced with a generated one.
       responses:
         '201':
           description: Token report saved, and a credit was charged.
@@ -2045,8 +2091,13 @@ paths:
                       id:
                         type: string
                         description: |
-                          The report's PUBLIC id (a UUID) — what `GET /api/v1/token/reports`
-                          lists and what later reads accept, NOT the integer row id.
+                          The report's public id: the `reportPublicId` you supplied, or the UUID
+                          the server generated when you omitted it. It is the idempotency key
+                          for a retry of THIS operation.
+
+                          It is not the row id. `GET /api/v1/token/reports` identifies each row
+                          by an integer `id` (see TokenReportListItem), and this UUID is not a
+                          field of those rows.
                       tokenSymbol: { type: [string, "null"] }
                       securityScore: { type: [number, "null"] }
                       charged: { type: boolean, enum: [true] }
@@ -2054,8 +2105,11 @@ paths:
           description: |
             Nothing new was saved and NOTHING WAS CHARGED. Two reachable cases, both 200:
 
-            * **duplicate** — a report for this token already exists, so its id comes back with
-              `duplicate: true`.
+            * **duplicate** — this `reportPublicId` has already been used BY YOU, so the stored
+              report answers with `duplicate: true`. The key is the id, not the token: the same
+              address saved under a different `reportPublicId` is a new report and is charged.
+              The values returned are the STORED ones, so a retry carrying a different body
+              cannot overwrite what was saved.
             * **honeypot verification not actionable** — the stored honeypot result was not
               usable, so `id` is `null`, no report was saved and no credit was taken; the
               `honeypot` block says why.
@@ -2072,7 +2126,10 @@ paths:
                   data:
                     oneOf:
                       - type: object
-                        description: Duplicate — the existing report's id is returned.
+                        description: |
+                          Duplicate — the `reportPublicId` was already used by this account.
+                          `id` is that same public id; `tokenSymbol` and `securityScore` are
+                          read from the stored report.
                         required: [id, duplicate, charged]
                         properties:
                           id: { type: string }
@@ -2094,6 +2151,33 @@ paths:
                               status: { type: string }
                               reason: { type: [string, "null"] }
                           message: { type: string }
+        '422':
+          description: |
+            The request could not be accepted, and nothing was saved or charged. Envelope
+            `{ success: false, error: { message, code: "VALIDATION_ERROR", details } }`, where
+            `details` names the field at fault. Reachable for a body that is not a JSON object,
+            a missing `address` or `network`, and a `reportPublicId` that is present but not a
+            UUID.
+
+            This status is not new behaviour — the runtime has always answered it for these
+            inputs; before it was simply undocumented.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, error]
+                properties:
+                  success: { type: boolean, enum: [false] }
+                  error:
+                    type: object
+                    required: [message, code, details]
+                    properties:
+                      message: { type: string }
+                      code: { type: string, enum: [VALIDATION_ERROR] }
+                      details:
+                        type: object
+                        description: Field name to the reason that field was rejected.
+                        additionalProperties: { type: string }
     get:
       tags: [Saved Reports]
       summary: List saved token reports
@@ -2128,18 +2212,56 @@ paths:
           application/json:
             schema:
               type: object
-              required: [blockNumber, network, reportData]
+              # NO property is required on every path. The runtime takes THREE routes and each
+              # needs different input, so a single required set described a constraint it does
+              # not enforce — and hid the preferred one. See the description of each property.
+              required: []
               properties:
-                blockNumber: { type: integer }
-                network: { type: string }
-                reportData: { type: object }
+                reportPublicId:
+                  type: string
+                  description: |
+                    The saved report's public id, from `POST /api/v1/block/analyze` — which
+                    already SAVED the report. This is the PREFERRED path: it resolves that
+                    report directly and needs no cache.
+
+                    `404` if no report with this id belongs to you. Not-found and not-owned are
+                    deliberately the same answer.
+                reportId:
+                  type: string
+                  description: |
+                    An alias of `reportPublicId`, carrying the same public UUID.
+                    `reportPublicId` wins when both are supplied; a falsy one falls through.
+                blockNumber:
+                  type: integer
+                  description: |
+                    LEGACY correlation path, used only when neither identifier is supplied:
+                    the analysis is found through a short-lived per-account cache keyed by
+                    block and network. Both `blockNumber` and `network` are required on this
+                    path, and `422` is the answer when neither identifier nor both of these
+                    are present. Prefer `reportPublicId`.
+                network:
+                  type: string
+                  description: The network of the legacy correlation path. See `blockNumber`.
+                name:
+                  type: string
+                  description: |
+                    Renames the resolved report. TRUNCATED at 200 characters rather than
+                    rejected, and an empty value is ignored. The only mutation this operation
+                    performs.
+                reportData:
+                  type: object
+                  deprecated: true
+                  description: |
+                    **IGNORED.** No code path reads it. The analysis was persisted by
+                    `POST /api/v1/block/analyze`; this operation resolves what that call
+                    saved and never accepts caller-supplied report content. Kept as an
+                    accepted, optional property so a client still sending it is unaffected.
       responses:
         '200':
           description: |
-            Report saved. The handler answers **200**, not 201 — every success path resolves an
-            EXISTING analysis (optionally renaming it), and no code path answers 201. A legacy
-            cached analysis with no public id cannot be saved and answers
-            `410 LEGACY_CACHE_NO_SAVE`.
+            The report was resolved, and renamed if `name` was supplied. The handler answers
+            **200**, not 201 — every success path resolves an EXISTING analysis, and no code
+            path answers 201.
           content:
             application/json:
               schema:
@@ -2160,6 +2282,63 @@ paths:
                       reportPublicId:
                         type: [string, "null"]
                         description: Same value as `reportId`; both keys are emitted.
+        '404':
+          description: |
+            No report with the supplied `reportPublicId` / `reportId` belongs to this account.
+            Not-found and not-owned are the SAME answer, deliberately: distinguishing them
+            would tell a caller that someone else's report exists.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, error]
+                properties:
+                  success: { type: boolean, enum: [false] }
+                  error:
+                    type: object
+                    required: [message, code]
+                    properties:
+                      message: { type: string }
+                      code: { type: string }
+        '410':
+          description: |
+            The legacy correlation path found something that can no longer be saved. Two
+            distinct cases, both 410, told apart by `error.code`:
+
+            * `LEGACY_CACHE_NO_SAVE` — the cached analysis predates public ids, so there is
+              nothing to resolve. Re-run `POST /api/v1/block/analyze`.
+            * `REPORT_DELETED_RERUN_REQUIRED` — the correlation exists but the report row is
+              gone. Re-run the analysis.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, error]
+                properties:
+                  success: { type: boolean, enum: [false] }
+                  error:
+                    type: object
+                    required: [message, code]
+                    properties:
+                      message: { type: string }
+                      code: { type: string }
+        '422':
+          description: |
+            Not enough to identify a report: no `reportPublicId`, no `reportId`, and not both
+            of `blockNumber` and `network`. Also returned for a body that is not a JSON object.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, error]
+                properties:
+                  success: { type: boolean, enum: [false] }
+                  error:
+                    type: object
+                    required: [message, code]
+                    properties:
+                      message: { type: string }
+                      code: { type: string }
     get:
       tags: [Saved Reports]
       summary: List saved block reports
@@ -2217,7 +2396,33 @@ paths:
   /api/v1/multichain/reports:
     post:
       tags: [Saved Reports]
-      summary: Save a multi-chain wallet report
+      summary: Resolve (and optionally rename) a saved multi-chain report
+      description: |
+        This operation does NOT create a report. `POST /api/v1/multichain/scan` runs the analysis
+        and auto-saves it; this endpoint RESOLVES that already-saved report and may rename it. No
+        analysis runs, nothing is persisted from the request body, and nothing is charged.
+
+        Identify the existing report by `reportPublicId` (preferred) or `reportId` (its alias).
+        If NEITHER identifier is supplied, `address` is required and the report is resolved
+        through the caller's cached scan correlation. Supplying several of them is accepted:
+
+        * `reportPublicId` — the report's public UUID. Preferred, and it wins whenever it is
+          present.
+        * `reportId` — an alias of `reportPublicId` carrying the same UUID. Used only when
+          `reportPublicId` is absent or empty; when both are present `reportPublicId` wins, so a
+          `reportPublicId` that matches nothing answers `404` rather than falling back to
+          `reportId`.
+        * `address` — the fallback identification path, used ONLY when neither identifier is
+          supplied. It resolves through YOUR OWN most recent scan of that address and works only
+          while that scan's correlation is still cached; otherwise the request answers
+          `410 LEGACY_CACHE_NO_SAVE` and the scan must be re-run. An `address` sent alongside an
+          identifier is simply not the path taken — it is not an error.
+
+        A successful request answers **200** with the existing report's identifiers. A report that
+        does not exist, or belongs to another account, answers `404 NOT_FOUND` — the two are
+        deliberately indistinguishable. Omitting all three identifiers answers
+        `422 VALIDATION_ERROR`, as does a malformed body. A correlation that exists but whose
+        report has since been deleted answers `410 REPORT_DELETED_RERUN_REQUIRED`.
       security:
         - apiKeyAuth: []
       requestBody:
@@ -2226,10 +2431,34 @@ paths:
           application/json:
             schema:
               type: object
-              required: [address, reportData]
               properties:
-                address: { type: string }
-                reportData: { type: object }
+                reportPublicId:
+                  type: string
+                  description: |
+                    The public UUID of an existing multi-chain report owned by the caller, as
+                    returned by `POST /api/v1/multichain/scan` or `GET /api/v1/multichain/reports`.
+                reportId:
+                  type: string
+                  description: |
+                    Alias of `reportPublicId`, carrying the same public UUID — NOT the integer
+                    `id`. Supplying both is accepted and `reportPublicId` takes precedence.
+                address:
+                  type: string
+                  description: |
+                    Used only when neither id is supplied: the report is resolved through the
+                    caller's own cached scan correlation for this address. Case-insensitive.
+                name:
+                  type: string
+                  description: |
+                    Optional rename of the resolved report. An empty string is ignored; a longer
+                    value is stored truncated rather than rejected.
+                reportData:
+                  type: object
+                  deprecated: true
+                  description: |
+                    IGNORED. Previously published as a required property, and still accepted so
+                    that existing clients keep working, but no part of it is read or persisted —
+                    the saved report comes from the scan, never from this body.
       responses:
         '200':
           description: |
@@ -2257,6 +2486,64 @@ paths:
                       reportPublicId:
                         type: [string, "null"]
                         description: Same value as `reportId`; both keys are emitted.
+        '404':
+          description: |
+            No report with the supplied `reportPublicId` / `reportId` belongs to this account,
+            or the address correlation resolved to no report. Not-found and not-owned are the
+            SAME answer, deliberately: distinguishing them would tell a caller that someone
+            else's report exists.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, error]
+                properties:
+                  success: { type: boolean, enum: [false] }
+                  error:
+                    type: object
+                    required: [message, code]
+                    properties:
+                      message: { type: string }
+                      code: { type: string }
+        '410':
+          description: |
+            The address correlation found something that can no longer be resolved. Two
+            distinct cases, both 410, told apart by `error.code`:
+
+            * `LEGACY_CACHE_NO_SAVE` — the cached scan predates public ids, so there is
+              nothing to resolve. Re-run `POST /api/v1/multichain/scan`.
+            * `REPORT_DELETED_RERUN_REQUIRED` — the correlation exists but the report row is
+              gone. Re-run the scan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, error]
+                properties:
+                  success: { type: boolean, enum: [false] }
+                  error:
+                    type: object
+                    required: [message, code]
+                    properties:
+                      message: { type: string }
+                      code: { type: string }
+        '422':
+          description: |
+            Not enough to identify a report: none of `reportPublicId`, `reportId` or `address`
+            was supplied. Also returned for a body that is not a JSON object.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, error]
+                properties:
+                  success: { type: boolean, enum: [false] }
+                  error:
+                    type: object
+                    required: [message, code]
+                    properties:
+                      message: { type: string }
+                      code: { type: string }
     get:
       tags: [Saved Reports]
       summary: List saved multi-chain reports
@@ -3609,7 +3896,12 @@ components:
       type: object
       description: Projected list row — NOT the stored token report; `reportData` is not included.
       properties:
-        id: { type: integer }
+        id:
+          type: integer
+          description: |
+            The report row's integer id. It is NOT the public UUID that
+            `POST /api/v1/token/reports` returns as `data.id`, and the two are not
+            interchangeable; this surface does not publish that UUID.
         address: { type: string }
         network: { type: string }
         tokenName: { type: [string, "null"] }

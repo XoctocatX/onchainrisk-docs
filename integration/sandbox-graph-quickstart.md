@@ -2,7 +2,16 @@
 
 Get a first sandbox graph response in under five minutes. This page is the integration-test entry point for any client that wants to wire up OnChainRisk graph data without paying for analysis or persisting reports.
 
-> **Sandbox graph is a preview, not the paid graph.** Limited to depth 1, last 7 days, ≤20 nodes / ≤30 edges, and a subset of networks. For the full graph, use paid `/api/graph/expand`. See `capability-matrix.md` for the comparison.
+> **One endpoint, both tiers.** `POST /api/graph/expand` is the graph operation on sandbox and
+> on paid — same method, same path, same request and response contract. Your credential
+> selects the execution: an `ocr_test_*` key gets a bounded graph (depth 1, last 7 days,
+> ≤20 nodes / ≤30 edges, a subset of networks, no billing), an `ocr_live_*` key gets the full
+> paid traversal. Switching tiers means swapping the key, not the URL. See
+> `capability-matrix.md` for the field-level comparison.
+>
+> *Migration note:* existing integrations calling the historical sandbox graph path
+> `/api/v1/sandbox/graph/expand` continue to work unchanged. It is no longer part of the
+> published contract, so new integrations should use `POST /api/graph/expand`.
 
 ---
 
@@ -16,10 +25,10 @@ Sandbox keys start with the `ocr_test_*` prefix. Free-tier accounts can mint one
 
 ## 2. Make a call
 
-**Endpoint:** `POST /api/v1/sandbox/graph/expand`
+**Endpoint:** `POST /api/graph/expand`
 
 ```bash
-curl -X POST https://api.onchainrisk.io/api/v1/sandbox/graph/expand \
+curl -X POST https://api.onchainrisk.io/api/graph/expand \
   -H "Authorization: Bearer ocr_test_PLACEHOLDER" \
   -H "Content-Type: application/json" \
   -d '{
@@ -28,6 +37,9 @@ curl -X POST https://api.onchainrisk.io/api/v1/sandbox/graph/expand \
     "depth": 1
   }'
 ```
+
+The identical call with an `ocr_live_*` key returns the paid graph. Nothing else about the request
+changes — not the path, not the headers, not the body.
 
 Replace `ocr_test_PLACEHOLDER` with your real sandbox key and `0xYourAddress` with the address you want to inspect.
 
@@ -146,7 +158,7 @@ Returns the same depth-1 response, with `_sandbox.truncated_fields.depth = "max_
 
 | HTTP | When | Body shape |
 |---|---|---|
-| **401** | Missing or invalid Bearer; JWT/session token (use API key, not browser session) | `{success:false, error:{code:"UNAUTHORIZED" \| "API_KEY_REQUIRED"}}` |
+| **401** | Missing, malformed or invalid integration credential — no `Authorization` header, or an API key that is revoked, mistyped or not yours | `{success:false, error:{code:"UNAUTHORIZED" \| "API_KEY_REQUIRED"}}` |
 | **422** | Validation failed (address, network, unsupported sandbox network) | `{success:false, error:{code:"VALIDATION_ERROR", details:{errorCode:"...", ...}}}` |
 | **429** | Rate limit exceeded (per-key bucket, per-IP bucket) | `{success:false, error:"rate_limit_exceeded", bucket, retry_after_seconds}` |
 | **503** | Sandbox graph temporarily unavailable (upstream issue) | `{success:false, error:{code:"SANDBOX_GRAPH_UNAVAILABLE"}}` |
@@ -166,8 +178,8 @@ Paid keys can also call this endpoint (the response is still sandbox-shaped); th
 ## 10. Postman
 
 Drop these into Postman for a one-click setup:
-- Collection: [`postman-sandbox-collection.json`](https://api.onchainrisk.io/postman-sandbox-collection.json)
-- Environment: [`postman-sandbox-environment.json`](https://api.onchainrisk.io/postman-sandbox-environment.json) — set `sandbox_api_key` and `sample_address` to your values.
+- Collection: [`postman-collection.json`](https://api.onchainrisk.io/postman-collection.json) — the SAME collection the production docs link; the environment selects the tier.
+- Environment: [`postman-sandbox-environment.json`](https://api.onchainrisk.io/postman-sandbox-environment.json) — set `api_key` to your sandbox key. `sample_address` already holds the documented fixture address.
 
 The collection includes a "Graph preview — sample (depth=1, last 7d)" item with response shape assertions baked in.
 
