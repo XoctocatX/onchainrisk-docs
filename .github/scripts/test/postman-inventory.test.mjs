@@ -13,6 +13,8 @@ import { dirname, resolve } from 'node:path';
 import {
   collectInventory, reportInventory, runInventory, dispositionFor, isRelevant,
   RETIRED_NAMES, DISPOSITIONS, InventoryError,
+  parseCandidateIds, canonicalEnvContracts, assessCandidate, inspectCandidates,
+  reportCandidates, runCandidateInspection, MAX_CANDIDATES,
 } from '../postman-inventory.mjs';
 import { TARGETS } from '../postman-sync.mjs';
 
@@ -103,8 +105,16 @@ describe('inventory — write verbs are unreachable', () => {
   test('nothing writable is imported from the publisher', () => {
     const imports = [...SRC.matchAll(/import \{([^}]+)\} from '\.\/postman-sync\.mjs'/g)]
       .flatMap((m) => m[1].split(',').map((s) => s.trim()).filter(Boolean));
-    // TARGETS is data; fingerprint and redact are pure string helpers. Nothing that can PUT.
-    assert.deepEqual(imports.sort(), ['TARGETS', 'fingerprint', 'redact']);
+    // Data and PURE helpers only. Nothing that can PUT: readLocal reads the repo, the two
+    // environment helpers normalize/hash in memory. The publisher's writing functions
+    // (syncEnvironment, syncCollection) are never imported.
+    assert.deepEqual(imports.sort(), [
+      'ENVIRONMENTS', 'TARGETS', 'environmentContentHash', 'fingerprint',
+      'normalizeEnvironmentForCompare', 'readLocal', 'redact',
+    ]);
+    for (const writer of ['syncEnvironment', 'syncCollection', 'postman']) {
+      assert.equal(imports.includes(writer), false, `${writer} must not be imported`);
+    }
   })
 })
 
@@ -362,8 +372,12 @@ describe('inventory — workflow wiring', () => {
    */
   const INVENTORY_CODE = INVENTORY.replace(/^\s*#.*$/gm, '');
 
-  test('`inventory` is a dispatch mode', () => {
-    assert.match(WF, /options: \[inventory, verify, publish\]/);
+  test('`inventory` is a dispatch mode, alongside the write mode it must not be confused with', () => {
+    const opts = WF.match(/options: \[([^\]]+)\]/)[1].split(',').map((x) => x.trim());
+    assert.ok(opts.includes('inventory'));
+    assert.ok(opts.includes('publish'), 'publish must remain a SEPARATE, explicit mode');
+    // membership, not an exact list: new read-only modes may be added without weakening this
+    assert.equal(opts.indexOf('inventory') === opts.indexOf('publish'), false);
   })
 
   test('the inventory job runs the maintained repo script', () => {
@@ -407,8 +421,246 @@ describe('inventory — workflow wiring', () => {
     assert.equal(/event_name == 'push'/.test(cond), false);
   })
 
+  test('`inspect-environments` is its own mode, its own job, and cannot write', () => {
+    assert.match(WF, /options: \[inventory, inspect-environments, verify, publish\]/);
+    const INSPECT = job('inspect-environments');
+    const code = INSPECT.replace(/^\s*#.*$/gm, '');
+    assert.match(code, /node \.github\/scripts\/postman-inventory\.mjs --inspect-environments/);
+    assert.match(code, /inputs\.mode == 'inspect-environments'/);
+    // the key and the requested ids, and nothing else: no target ids, no activation variable
+    const envBlock = code.slice(code.indexOf('env:'), code.indexOf('run:'));
+    const keys = [...envBlock.matchAll(/^\s{10}([A-Z_]+):/gm)].map((m) => m[1]);
+    assert.deepEqual(keys, ['POSTMAN_API_KEY', 'POSTMAN_CANDIDATE_ENVIRONMENT_IDS']);
+    assert.equal(code.includes('POSTMAN_AUTOPUBLISH_ENABLED'), false);
+    assert.equal(code.includes('POSTMAN_PRODUCTION_ENVIRONMENT_ID'), false);
+    assert.equal(code.includes('POSTMAN_SANDBOX_ENVIRONMENT_ID'), false);
+    assert.equal(/postman-sync\.mjs/.test(code), false);
+    assert.match(INSPECT, /needs: validate/);
+    assert.match(INSPECT, /environment: postman/);
+  })
+
   test('it still runs behind the validate job and the postman environment gate', () => {
     assert.match(INVENTORY, /needs: validate/);
     assert.match(INVENTORY, /environment: postman/);
+  })
+})
+
+/* ───────── bounded candidate inspection ───────── */
+
+const PROD_ID = '7dcbd85d-d75d-453a-8c0c-38794ee2caef';
+const SBX_ID = '9e130ad9-9644-4b59-bf1e-ed8cb039f01e';
+
+/** A fetch answering GET /environments/{id} from a fixture, recording every call. */
+function envFetch(byId) {
+  const calls = [];
+  const impl = async (url, init) => {
+    calls.push({ url, init });
+    const id = String(url).split('/environments/')[1];
+    if (!byId[id]) return { ok: false, status: 404, text: async () => 'not found' };
+    return { ok: true, status: 200, text: async () => JSON.stringify({ environment: byId[id] }) };
+  };
+  impl.calls = calls;
+  return impl;
+}
+
+const envDoc = (id, name, keys) => ({ id, uid: `999-${id}`, name, values: keys.map((k) => ({ key: k })) });
+
+describe('candidate inspection — bounded input', () => {
+  test('no ids fails closed: it must not fall back to a listing', () => {
+    assert.throws(() => parseCandidateIds(''), InventoryError);
+    assert.throws(() => parseCandidateIds(undefined), /does not fall back to listing/);
+  })
+
+  test('non-uuid input is refused, not fetched', async () => {
+    const fetchImpl = envFetch({});
+    await assert.rejects(
+      () => inspectCandidates({ apiKey: 'k', fetchImpl, ids: 'all,collections' }),
+      /Not Postman environment ids/,
+    );
+    assert.deepEqual(fetchImpl.calls, [], 'nothing may be requested for an invalid input');
+  })
+
+  test('the batch is capped, and duplicates collapse', () => {
+    const many = Array.from({ length: MAX_CANDIDATES + 1 }, () => PROD_ID.replace(/.$/, 'a')).join(',');
+    // identical ids collapse to one rather than tripping the cap
+    assert.deepEqual(parseCandidateIds(many), [PROD_ID.replace(/.$/, 'a')]);
+    const distinct = [
+      '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002',
+      '00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000004',
+      '00000000-0000-4000-8000-000000000005',
+    ].join(',');
+    assert.throws(() => parseCandidateIds(distinct), /At most 4 candidates/);
+  })
+
+  test('EXECUTION: only the requested ids are fetched, GET only, no body', async () => {
+    const fetchImpl = envFetch({
+      [PROD_ID]: envDoc(PROD_ID, 'OnChainRisk Paid', ['base_url']),
+      [SBX_ID]: envDoc(SBX_ID, 'OnChainRisk Sandbox', ['base_url']),
+    });
+    await inspectCandidates({ apiKey: 'k', fetchImpl, ids: `${PROD_ID},${SBX_ID}` });
+    const paths = fetchImpl.calls.map((c) => String(c.url).replace('https://api.postman.com', ''));
+    assert.deepEqual(paths, [`/environments/${PROD_ID}`, `/environments/${SBX_ID}`]);
+    assert.deepEqual([...new Set(fetchImpl.calls.map((c) => c.init.method))], ['GET']);
+    for (const c of fetchImpl.calls) assert.equal('body' in c.init, false);
+    // no listing endpoint is touched: "do not inspect unrelated objects"
+    assert.equal(paths.some((p) => p === '/environments' || p === '/collections'), false);
+  })
+
+  test('a 404 on a requested id is a failure, not an empty assessment', async () => {
+    await assert.rejects(
+      () => inspectCandidates({ apiKey: 'k', fetchImpl: envFetch({}), ids: PROD_ID }),
+      /HTTP 404/,
+    );
+  })
+})
+
+describe('candidate inspection — the canonical contract is read from the reviewed files', () => {
+  test('both roles expose 15 keys, an api_key, and no tier-named credential', () => {
+    const contracts = canonicalEnvContracts();
+    assert.equal(contracts.length, 2);
+    for (const c of contracts) {
+      assert.equal(c.keys.length, 15);
+      assert.ok(c.keys.includes('api_key'));
+      assert.equal(c.keys.includes('paid_api_key'), false);
+      assert.equal(c.keys.includes('sandbox_api_key'), false);
+    }
+    // the identical-key-set lock, restated here so the inspection cannot drift from it
+    const [a, b] = contracts.map((c) => [...c.keys].sort().join(','));
+    assert.equal(a, b);
+  })
+})
+
+describe('candidate inspection — reuse verdicts', () => {
+  const contracts = canonicalEnvContracts();
+  const prodContract = contracts.find((c) => c.role === 'production-environment');
+  const sbxContract = contracts.find((c) => c.role === 'sandbox-environment');
+
+  test('a name mismatch means the publisher REFUSES the id until it is renamed', () => {
+    const a = assessCandidate(envDoc(PROD_ID, 'OnChainRisk Paid', ['base_url']), prodContract);
+    assert.equal(a.nameMatches, false);
+    assert.equal(a.publisherWouldAcceptIdAsIs, false);
+    // the id itself is still fine to keep — it is the NAME that blocks the write
+    assert.equal(a.safeToReuseCloudId, true);
+    assert.ok(a.requiredMutation.some((m) => /^RENAME "OnChainRisk Paid"/.test(m)));
+  })
+
+  test('a matching name means it can be updated in place with no rename', () => {
+    const a = assessCandidate(envDoc(SBX_ID, 'OnChainRisk Sandbox', ['base_url']), sbxContract);
+    assert.equal(a.nameMatches, true);
+    assert.equal(a.publisherWouldAcceptIdAsIs, true);
+    assert.equal(a.requiredMutation.some((m) => /RENAME/.test(m)), false);
+  })
+
+  test('a tier-named credential variable is reported as forbidden, and as an extra to remove', () => {
+    const a = assessCandidate(
+      envDoc(PROD_ID, 'OnChainRisk Production', ['paid_api_key']), prodContract,
+    );
+    assert.deepEqual(a.forbiddenCredentialVars, ['paid_api_key']);
+    assert.equal(a.hasCredentialVar, false);
+    assert.ok(a.extra.includes('paid_api_key'));
+    assert.ok(a.missing.includes('api_key'));
+  })
+
+  test('an already-conforming environment needs no mutation at all', () => {
+    const a = assessCandidate(envDoc(SBX_ID, 'OnChainRisk Sandbox', sbxContract.keys), sbxContract);
+    assert.equal(a.keySetIdentical, true);
+    assert.equal(a.countMatches, true);
+    assert.deepEqual(a.requiredMutation, ['none — already matches the contract']);
+  })
+
+  test('the counts are reported against the contract, not assumed to be 15', () => {
+    const a = assessCandidate(envDoc(SBX_ID, 'OnChainRisk Sandbox', ['base_url']), sbxContract);
+    assert.equal(a.currentCount, 1);
+    assert.equal(a.expectedCount, 15);
+    assert.equal(a.countMatches, false);
+  })
+})
+
+describe('candidate inspection — pairing is by name, never by position', () => {
+  test('ids given in REVERSE order still pair to the right roles', async () => {
+    const byId = {
+      [PROD_ID]: envDoc(PROD_ID, 'OnChainRisk Production', ['base_url']),
+      [SBX_ID]: envDoc(SBX_ID, 'OnChainRisk Sandbox', ['base_url']),
+    };
+    // sandbox id FIRST — a positional implementation would bind it to production
+    const { roles } = await inspectCandidates({
+      apiKey: 'k', fetchImpl: envFetch(byId), ids: `${SBX_ID},${PROD_ID}`,
+    });
+    const prod = roles.find((r) => r.role === 'production-environment');
+    const sbx = roles.find((r) => r.role === 'sandbox-environment');
+    assert.equal(prod.candidate.requestedId, PROD_ID);
+    assert.equal(sbx.candidate.requestedId, SBX_ID);
+  })
+
+  test('two candidates carrying the SAME canonical name is flagged ambiguous', async () => {
+    const other = '11111111-2222-4333-8444-555555555555';
+    const byId = {
+      [SBX_ID]: envDoc(SBX_ID, 'OnChainRisk Sandbox', ['base_url']),
+      [other]: envDoc(other, 'OnChainRisk Sandbox', ['base_url']),
+    };
+    const { roles } = await inspectCandidates({
+      apiKey: 'k', fetchImpl: envFetch(byId), ids: `${SBX_ID},${other}`,
+    });
+    assert.equal(roles.find((r) => r.role === 'sandbox-environment').ambiguous, true);
+  })
+
+  test('a role with no candidate at all reports createNew=YES', async () => {
+    const byId = { [SBX_ID]: envDoc(SBX_ID, 'OnChainRisk Sandbox', ['base_url']) };
+    const { roles } = await inspectCandidates({
+      apiKey: 'k', fetchImpl: envFetch(byId), ids: SBX_ID,
+    });
+    const prod = roles.find((r) => r.role === 'production-environment');
+    assert.equal(prod.reuse, 'NO');
+    assert.equal(prod.createNew, 'YES');
+    assert.equal(prod.candidate, null);
+  })
+})
+
+describe('candidate inspection — report and safety', () => {
+  const byId = {
+    [PROD_ID]: envDoc(PROD_ID, 'OnChainRisk Paid', ['base_url', 'paid_api_key']),
+    [SBX_ID]: envDoc(SBX_ID, 'OnChainRisk Sandbox', ['base_url', 'sandbox_api_key']),
+  };
+
+  test('it ends with WRITES_ISSUED = 0 and names the blocking rule', async () => {
+    const lines = [];
+    await runCandidateInspection({
+      env: { POSTMAN_API_KEY: SENTINEL, POSTMAN_CANDIDATE_ENVIRONMENT_IDS: `${PROD_ID},${SBX_ID}` },
+      fetchImpl: envFetch(byId),
+      log: (s) => lines.push(String(s)),
+    });
+    const all = lines.join('\n');
+    assert.equal(lines.at(-1), 'WRITES_ISSUED = 0');
+    assert.match(all, /the name assertion blocks the write until renamed/);
+    assert.match(all, new RegExp(PROD_ID));
+    assert.match(all, new RegExp(SBX_ID));
+  })
+
+  test('the key never reaches the inspection output', async () => {
+    const lines = [];
+    await runCandidateInspection({
+      env: { POSTMAN_API_KEY: SENTINEL, POSTMAN_CANDIDATE_ENVIRONMENT_IDS: PROD_ID },
+      fetchImpl: envFetch(byId),
+      log: (s) => lines.push(String(s)),
+    });
+    assert.equal(lines.join('\n').includes(SENTINEL), false);
+  })
+
+  test('variable VALUES are never printed — only keys', async () => {
+    const withValues = {
+      [SBX_ID]: {
+        id: SBX_ID, name: 'OnChainRisk Sandbox',
+        values: [{ key: 'api_key', value: 'ocr_test_SHOULD_NOT_BE_PRINTED' }],
+      },
+    };
+    const lines = [];
+    await runCandidateInspection({
+      env: { POSTMAN_API_KEY: SENTINEL, POSTMAN_CANDIDATE_ENVIRONMENT_IDS: SBX_ID },
+      fetchImpl: envFetch(withValues),
+      log: (s) => lines.push(String(s)),
+    });
+    const all = lines.join('\n');
+    assert.equal(all.includes('SHOULD_NOT_BE_PRINTED'), false, 'a value may be a real credential');
+    assert.match(all, /api_key/, 'but the key must be shown');
   })
 })

@@ -27,7 +27,10 @@
  * never fingerprinted, and never interpolated into any message.
  */
 
-import { TARGETS, fingerprint, redact } from './postman-sync.mjs';
+import {
+  TARGETS, ENVIRONMENTS, fingerprint, redact, readLocal,
+  normalizeEnvironmentForCompare, environmentContentHash,
+} from './postman-sync.mjs';
 
 const POSTMAN_API = 'https://api.postman.com';
 
@@ -182,6 +185,213 @@ export function reportInventory({ rows, coverage, outOfScope, writesIssued }, lo
   log(`WRITES_ISSUED = ${writesIssued}`);
 }
 
+/* ───────────────── bounded candidate inspection (read-only) ───────────────── */
+
+/*
+ * The cutover found two PRE-EXISTING environments and no canonical collection. The question is
+ * narrow: can those two cloud objects BECOME the canonical Production/Sandbox targets, keeping
+ * their ids, or must new ones be created? Answering it needs their full remote representation,
+ * so this inspects EXACTLY the ids it is given — never a listing, never anything adjacent.
+ *
+ * The decisive rule is not a judgement call, it is already in the publisher:
+ * `assertEnvironmentBinding` throws when the REMOTE name differs from the role's expected name.
+ * So an environment whose name already matches can be updated in place, and one whose name does
+ * not cannot be written to at all until it is renamed out of band — by design, because that is
+ * what stops the production placeholder being published over the sandbox environment.
+ */
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const MAX_CANDIDATES = 4;
+
+/** Parse and bound the requested ids. Fails closed: no ids means no inspection, not a pass. */
+export function parseCandidateIds(raw) {
+  const ids = String(raw ?? '').split(/[\s,]+/).filter(Boolean);
+  if (!ids.length) {
+    throw new InventoryError(
+      'No candidate environment ids were given. Pass the ids to inspect; this does not fall back '
+      + 'to listing or guessing, which would inspect objects nobody asked about.',
+    );
+  }
+  const bad = ids.filter((i) => !UUID_RE.test(i));
+  if (bad.length) throw new InventoryError(`Not Postman environment ids: ${bad.join(', ')}`);
+  // Deduplicate BEFORE the cap: the cap bounds how many OBJECTS are inspected, and a repeated
+  // id is one object. Capping first would reject a harmless copy-paste as if it were a wide scan.
+  const unique = [...new Set(ids)];
+  if (unique.length > MAX_CANDIDATES) {
+    throw new InventoryError(`At most ${MAX_CANDIDATES} candidates per run; got ${unique.length}.`);
+  }
+  return unique;
+}
+
+/** The canonical contract each candidate is measured against, read from the reviewed local files. */
+export function canonicalEnvContracts() {
+  return ENVIRONMENTS.map((t) => {
+    const local = normalizeEnvironmentForCompare(readLocal(t.file));
+    return {
+      role: t.role,
+      idVar: t.idVar,
+      expectedName: t.expectedName,
+      file: t.file,
+      keys: local.values.map((v) => v.key),
+      hash: environmentContentHash(local),
+    };
+  });
+}
+
+const CREDENTIAL_KEY = 'api_key';
+const FORBIDDEN_CREDENTIAL_KEYS = ['paid_api_key', 'sandbox_api_key'];
+
+/**
+ * One candidate against one canonical role. Returns the full reuse verdict, including whether the
+ * publisher would accept the id as-is.
+ */
+export function assessCandidate(remoteEnv, contract) {
+  const name = remoteEnv?.name ?? null;
+  const keys = (remoteEnv?.values ?? []).map((v) => v.key);
+  const keySet = new Set(keys);
+
+  const nameMatches = name === contract.expectedName;
+  const missing = contract.keys.filter((k) => !keySet.has(k));
+  const extra = keys.filter((k) => !contract.keys.includes(k));
+  const forbidden = FORBIDDEN_CREDENTIAL_KEYS.filter((k) => keySet.has(k));
+
+  const mutations = [];
+  if (!nameMatches) mutations.push(`RENAME "${name}" -> "${contract.expectedName}"`);
+  if (missing.length) mutations.push(`ADD ${missing.length} variable(s): ${missing.join(', ')}`);
+  if (extra.length) mutations.push(`REMOVE ${extra.length} variable(s): ${extra.join(', ')}`);
+  if (!keySet.has(CREDENTIAL_KEY)) mutations.push(`ADD the credential variable \`${CREDENTIAL_KEY}\``);
+
+  /*
+   * Reusing the ID is safe whenever the object is genuinely this role's environment: the publisher
+   * PUTs `{name, values}` wholesale and keeps the remote id, so a differing variable shape is an
+   * ordinary UPDATE, not an obstacle. The one thing that BLOCKS a write is the name assertion.
+   */
+  return {
+    role: contract.role,
+    idVar: contract.idVar,
+    expectedName: contract.expectedName,
+    currentName: name,
+    currentKeys: keys,
+    currentCount: keys.length,
+    expectedCount: contract.keys.length,
+    countMatches: keys.length === contract.keys.length,
+    keySetIdentical: missing.length === 0 && extra.length === 0,
+    missing,
+    extra,
+    hasCredentialVar: keySet.has(CREDENTIAL_KEY),
+    forbiddenCredentialVars: forbidden,
+    nameMatches,
+    publisherWouldAcceptIdAsIs: nameMatches,
+    safeToReuseCloudId: true,
+    requiredMutation: mutations.length ? mutations : ['none — already matches the contract'],
+  };
+}
+
+/** GETs exactly the given environment ids and assesses each against both canonical roles. */
+export async function inspectCandidates({ apiKey, fetchImpl, ids }) {
+  if (!apiKey) {
+    throw new InventoryError(
+      'POSTMAN_API_KEY is not set. The candidate inspection needs the repository secret.',
+    );
+  }
+  const wanted = parseCandidateIds(ids);
+  const contracts = canonicalEnvContracts();
+
+  const candidates = [];
+  for (const id of wanted) {
+    const body = await get(`/environments/${id}`, { apiKey, fetchImpl });
+    const remote = body?.environment ?? body;
+    /*
+     * Pair by NAME similarity to a role, never by position: assuming "the first id is production"
+     * is how a reviewed id ends up bound to the wrong tier. A candidate is assessed against every
+     * role, and the best match is the one whose name already agrees, else the closest by key set.
+     */
+    const assessments = contracts.map((c) => assessCandidate(remote, c));
+    const byName = assessments.find((a) => a.nameMatches);
+    const best = byName ?? [...assessments].sort(
+      (x, y) => (x.missing.length + x.extra.length) - (y.missing.length + y.extra.length),
+    )[0];
+    candidates.push({
+      requestedId: id,
+      remoteId: remote?.id ?? null,
+      remoteUid: remote?.uid ?? null,
+      idMatchesRequested: !remote?.id || remote.id === id,
+      name: remote?.name ?? null,
+      assessments,
+      best,
+    });
+  }
+
+  /* Per-role reuse decision, computed from the candidates rather than assumed. */
+  const roles = contracts.map((c) => {
+    const exact = candidates.filter((k) => k.name === c.expectedName);
+    const nearest = candidates.filter((k) => k.best.role === c.role);
+    const chosen = exact[0] ?? nearest[0] ?? null;
+    return {
+      role: c.role,
+      idVar: c.idVar,
+      expectedName: c.expectedName,
+      candidate: chosen,
+      reuse: chosen ? 'YES' : 'NO',
+      createNew: chosen ? 'NO' : 'YES',
+      ambiguous: exact.length > 1,
+    };
+  });
+
+  return { candidates, contracts, roles, writesIssued: 0 };
+}
+
+export function reportCandidates({ candidates, contracts, roles, writesIssued }, log = console.log) {
+  log('\nCANDIDATE ENVIRONMENT INSPECTION — read-only, exactly the ids requested\n');
+  log(`  canonical contract: ${contracts.map((c) => `${c.expectedName} (${c.keys.length} vars)`).join(' | ')}`);
+  log(`  credential variable: ${CREDENTIAL_KEY} — forbidden: ${FORBIDDEN_CREDENTIAL_KEYS.join(', ')}\n`);
+
+  for (const k of candidates) {
+    const a = k.best;
+    log(`  cloud object            : environment ${k.requestedId}`);
+    log(`  remote identity         : id ${k.remoteId ?? '(none)'} / uid ${k.remoteUid ?? '(none returned)'}`);
+    if (!k.idMatchesRequested) log('  !! the remote id does not equal the requested id');
+    log(`  current name            : ${k.name ?? '(none)'}`);
+    log(`  current variable count  : ${a.currentCount} (contract expects ${a.expectedCount})`);
+    log(`  current variable keys   : ${a.currentKeys.length ? a.currentKeys.join(', ') : '(none)'}`);
+    log(`  canonical role candidate: ${a.role} -> "${a.expectedName}"`);
+    log(`  key set identical       : ${a.keySetIdentical ? 'YES' : 'NO'}`);
+    if (a.missing.length) log(`    missing vs contract   : ${a.missing.join(', ')}`);
+    if (a.extra.length) log(`    extra vs contract     : ${a.extra.join(', ')}`);
+    log(`  has \`${CREDENTIAL_KEY}\`          : ${a.hasCredentialVar ? 'YES' : 'NO'}`);
+    log(`  forbidden credential var: ${a.forbiddenCredentialVars.length ? a.forbiddenCredentialVars.join(', ') : 'none'}`);
+    log(`  safe to reuse cloud id  : ${a.safeToReuseCloudId ? 'YES' : 'NO'}`);
+    log(`  publisher accepts as-is : ${a.publisherWouldAcceptIdAsIs ? 'YES' : 'NO — the name assertion blocks the write until renamed'}`);
+    log(`  required mutation if reused:`);
+    for (const m of a.requiredMutation) log(`    - ${m}`);
+    log('');
+  }
+
+  log('ROLE DECISIONS\n');
+  for (const r of roles) {
+    const id = r.candidate ? r.candidate.requestedId : '(none)';
+    log(`  ${r.expectedName}`);
+    log(`    reuse existing cloud id : ${r.reuse}  ${r.candidate ? `(${id})` : ''}`);
+    log(`    requires a NEW object   : ${r.createNew}`);
+    log(`    would set               : ${r.idVar} = ${r.candidate ? id : '(unknown — none exists)'}`);
+    if (r.ambiguous) log('    !! more than one candidate carries this exact name — DECIDE, do not pick');
+    log('');
+  }
+
+  log('No environment was created, renamed, updated or deleted.');
+  log(`WRITES_ISSUED = ${writesIssued}`);
+}
+
+export async function runCandidateInspection({
+  env = process.env, fetchImpl = globalThis.fetch, log = console.log,
+} = {}) {
+  const result = await inspectCandidates({
+    apiKey: env.POSTMAN_API_KEY, fetchImpl, ids: env.POSTMAN_CANDIDATE_ENVIRONMENT_IDS,
+  });
+  reportCandidates(result, log);
+  return result;
+}
+
 export async function runInventory({
   env = process.env, fetchImpl = globalThis.fetch, log = console.log,
 } = {}) {
@@ -194,7 +404,9 @@ const isMain = process.argv[1]
   && process.argv[1].endsWith('postman-inventory.mjs');
 if (isMain) {
   try {
-    await runInventory();
+    // One flag, one read-only behaviour. Neither branch can write.
+    if (process.argv.includes('--inspect-environments')) await runCandidateInspection();
+    else await runInventory();
   } catch (e) {
     // The key is never part of a message, but redact defensively: a transport error can echo a
     // request URL, and a future header change must not be able to leak through an exception.

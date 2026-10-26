@@ -77,7 +77,13 @@ on:
         required: true
         default: verify
         type: choice
-        options: [inventory, verify, publish]
+        options: [inventory, inspect-environments, verify, publish]
+      candidate_environment_ids:
+        description: >-
+          inspect-environments only: up to 4 comma-separated Postman environment ids to inspect,
+          read-only. Required for that mode; ignored by every other mode.
+        required: false
+        type: string
 
 # Read-only. Publication writes to Postman, never to this repository.
 permissions:
@@ -175,6 +181,29 @@ jobs:
           # POSTMAN_AUTOPUBLISH_ENABLED here: the inventory must work whatever its value is.
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
         run: node .github/scripts/postman-inventory.mjs
+
+  inspect-environments:
+    name: Inspect candidate environments (read-only)
+    # Same safety basis as the inventory job: the script cannot write, the activation variable is
+    # neither referenced nor passed, and no target-id variable is passed either -- the ids come
+    # from the dispatch input, so inspecting a candidate can never be confused with publishing to
+    # a configured target. Bounded by construction: the script refuses a non-uuid, refuses an
+    # empty list rather than falling back to a listing, and inspects at most 4 objects.
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'inspect-environments'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: postman
+    steps:
+      - name: Check out the dispatched ref
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: GET exactly the requested environments and assess reuse
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+          POSTMAN_CANDIDATE_ENVIRONMENT_IDS: ${{ inputs.candidate_environment_ids }}
+        run: node .github/scripts/postman-inventory.mjs --inspect-environments
 
   verify-only:
     name: Verify against Postman (read-only)

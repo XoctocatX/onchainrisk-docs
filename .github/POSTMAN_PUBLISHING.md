@@ -45,6 +45,7 @@ repository and never upstream of it.
 | push to `main` changing the collection or either environment file | validation, then publish — **only if `POSTMAN_AUTOPUBLISH_ENABLED` is exactly `true`**. |
 | push to `main` changing anything else (README, CHANGELOG, integration docs, the workflow itself) | nothing. The publication trigger is path-filtered. |
 | `workflow_dispatch` with `mode: inventory` | read-only: lists what exists in Postman cloud with one disposition per object, and writes nothing. Runs from **any** ref, and works whatever `POSTMAN_AUTOPUBLISH_ENABLED` is set to — it is how the three ids get discovered in the first place. |
+| `workflow_dispatch` with `mode: inspect-environments` | read-only: GETs up to four environment ids given as `candidate_environment_ids` and reports, per object, whether it can become a canonical target while keeping its cloud id. Writes nothing. |
 | `workflow_dispatch` on `main` with `mode: verify` | read-only: reports `NOOP` or `UPDATE` **per target** and writes nothing. |
 | `workflow_dispatch` on `main` with `mode: publish` | publishes, same as a push, and equally gated on the activation variable. |
 
@@ -130,6 +131,34 @@ fingerprint of that id, and **one disposition each**:
 
 A target satisfied by two objects is reported as `AMBIGUOUS — DECIDE`, never resolved by picking
 one. The run ends with `WRITES_ISSUED = 0`.
+
+### Deciding whether an existing cloud object can be reused: `mode: inspect-environments`
+
+The inventory says what exists; this says whether it can be *adopted*. Give it the ids:
+
+```bash
+gh workflow run publish-postman.yml --ref <branch> \
+  -f mode=inspect-environments \
+  -f candidate_environment_ids=<id>,<id>
+```
+
+For each id it prints the current name, the current variable **keys** (never values — a value may
+be a placeholder someone is about to replace with a real credential), the delta against the
+reviewed local file for the role it best matches, and the mutation that reuse would require.
+
+The verdict that matters is `publisher accepts as-is`, and it is not a judgement — it is
+`assertEnvironmentBinding` in the publisher, which **refuses to write when the remote name
+differs from the role's expected name**. So an environment already named as a role expects can be
+updated in place, and one that is not cannot be written to at all until it is renamed out of
+band. That assertion is what stops the production placeholder being published over the sandbox
+environment, so the answer is "rename first", never "relax the check".
+
+A differing variable shape is *not* an obstacle: the PUT carries `{name, values}` wholesale and
+keeps the remote's own id, so an old variable set is replaced rather than merged.
+
+Candidates are paired to roles **by name, never by position** — assuming "the first id is
+production" is how a reviewed id ends up bound to the wrong tier. Ids must be UUIDs, at most four
+per run, and an empty list fails rather than falling back to a listing.
 
 It is implemented by `.github/scripts/postman-inventory.mjs`, which is read-only by construction
 rather than by configuration: its single network primitive hard-codes `method: 'GET'` and accepts
