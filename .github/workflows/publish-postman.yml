@@ -29,9 +29,11 @@
 #   variable  POSTMAN_SANDBOX_ENVIRONMENT_ID     the CLOUD id of "OnChainRisk Sandbox"
 #   variable  POSTMAN_AUTOPUBLISH_ENABLED      the activation kill switch — see below
 #
-# The `_postman_id` in the checked-in collection and the `id` in each checked-in environment are
-# DOCUMENT identifiers, not cloud ids. The script refuses to guess a cloud id, and has no create
-# path for any of the three targets.
+# No checked-in file carries a cloud id. The generated collection carries no `info._postman_id`
+# at all -- the cloud id and uid live only on the remote, and are copied into the payload so a PUT
+# preserves the cloud document. Each environment's top-level `id` is a human-readable DOCUMENT
+# identifier: comparison drops it and the PUT substitutes the configured cloud id. The script
+# refuses to guess a cloud id, and has no create path for any of the three targets.
 #
 # ACTIVATION. Nothing can be written until POSTMAN_AUTOPUBLISH_ENABLED is EXACTLY the string
 # 'true'. Unset, empty, 'false', 'TRUE', '1' and 'yes' all leave publication disabled, and the
