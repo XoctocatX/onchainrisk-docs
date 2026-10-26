@@ -408,30 +408,68 @@ describe('first-activation gate', () => {
     const { readFileSync } = await import('node:fs');
     const wf = readFileSync(new URL('../../workflows/publish-postman.yml', import.meta.url), 'utf8');
     const src = readFileSync(new URL('../postman-sync.mjs', import.meta.url), 'utf8');
-    const publishJob = wf.slice(wf.indexOf('  publish:'), wf.indexOf('  verify-only:'));
+    const publishJob = wfJob(wf, 'publish');
     assert.match(publishJob, /vars\.POSTMAN_AUTOPUBLISH_ENABLED == 'true'/);
     assert.match(src, /autopublishEnabled/);
     // and the read-only job is deliberately NOT gated on it
-    const verifyJob = wf.slice(wf.indexOf('  verify-only:'));
+    const verifyJob = wfJob(wf, 'verify-only');
     assert.equal(verifyJob.includes("vars.POSTMAN_AUTOPUBLISH_ENABLED == 'true'"), false);
+  });
+
+  /*
+   * The read-only `verify` job must also be main-only. Nothing asserted that: a mutation removing
+   * `github.ref == 'refs/heads/main'` from verify-only left the whole suite green. It matters
+   * because verify reads the three CONFIGURED target ids and compares them against the artifacts
+   * at the dispatched ref -- run from an arbitrary branch it would report ACTION=UPDATE against
+   * whatever that branch happens to contain, which is a misleading answer about production.
+   * (`inventory` and `inspect-environments` are deliberately NOT main-only: they take no
+   * configured target id, so there is no production claim to get wrong.)
+   */
+  test('the verify job is main-only, and dispatch-only', async () => {
+    const { readFileSync } = await import('node:fs');
+    const wf = readFileSync(new URL('../../workflows/publish-postman.yml', import.meta.url), 'utf8');
+    const cond = wfJob(wf, 'verify-only').match(/if: (.*)/)[1];
+    assert.match(cond, /github\.ref == 'refs\/heads\/main'/);
+    assert.match(cond, /github\.event_name == 'workflow_dispatch'/);
+    assert.match(cond, /inputs\.mode == 'verify'/);
+    // a push must not reach it either
+    assert.equal(/event_name == 'push'/.test(cond), false);
   });
 
   test('the publish job passes the activation variable through to the script', async () => {
     const { readFileSync } = await import('node:fs');
     const wf = readFileSync(new URL('../../workflows/publish-postman.yml', import.meta.url), 'utf8');
-    const publishJob = wf.slice(wf.indexOf('  publish:'), wf.indexOf('  verify-only:'));
+    const publishJob = wfJob(wf, 'publish');
     assert.match(publishJob, /POSTMAN_AUTOPUBLISH_ENABLED: \$\{\{ vars\.POSTMAN_AUTOPUBLISH_ENABLED \}\}/);
   });
 
   test('a pull request can never publish, whatever the variable says', async () => {
     const { readFileSync } = await import('node:fs');
     const wf = readFileSync(new URL('../../workflows/publish-postman.yml', import.meta.url), 'utf8');
-    const publishJob = wf.slice(wf.indexOf('  publish:'), wf.indexOf('  verify-only:'));
+    const publishJob = wfJob(wf, 'publish');
     assert.match(publishJob, /github\.ref == 'refs\/heads\/main'/);
     assert.equal(publishJob.includes('pull_request'), false);
     // the validation job — the only one a pull request runs — never sees the secret
-    const validateJob = wf.slice(wf.indexOf('  validate:'), wf.indexOf('  publish:'));
+    const validateJob = wfJob(wf, 'validate');
     assert.equal(validateJob.includes('secrets.'), false, 'the PR-reachable job must not reference any secret');
     assert.equal(wf.slice(wf.indexOf('  publish:')).includes('secrets.POSTMAN_API_KEY'), true);
   });
 });
+
+
+/*
+ * A job's own block, bounded by the NEXT job key rather than by a named sibling. These
+ * assertions used to slice `publish:` -> `verify-only:`; when the read-only `inventory` and
+ * `inspect-environments` jobs were inserted between them that span silently grew to three jobs,
+ * so every guard assertion using it began measuring the wrong region while still passing. A
+ * guard has to be bounded by structure, not by whichever job happens to come next.
+ * Declared at the end of the file deliberately: function declarations hoist, and this keeps the
+ * import block untouched.
+ */
+function wfJob(wf, name) {
+  const start = wf.indexOf(`\n  ${name}:\n`);
+  if (start === -1) throw new Error(`job ${name} not found in the workflow`);
+  const rest = wf.slice(start + 1);
+  const next = rest.search(/\n  [a-z][a-z0-9-]*:\n/);
+  return next === -1 ? rest : rest.slice(0, next);
+}

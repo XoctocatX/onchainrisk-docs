@@ -275,7 +275,7 @@ describe('the repository passes the checks the workflow runs', () => {
 
   test('publication is gated on main and never on a pull request', () => {
     const wf = readFileSync(new URL('../../workflows/publish-postman.yml', import.meta.url), 'utf8');
-    const publish = wf.slice(wf.indexOf('  publish:'), wf.indexOf('  verify-only:'));
+    const publish = wfJob(wf, 'publish');
     assert.match(publish, /github\.ref == 'refs\/heads\/main'/);
     assert.equal(publish.includes('pull_request'), false);
   });
@@ -387,3 +387,21 @@ describe('both real checked-in collections', () => {
     assert.deepEqual(prod.values.map((v) => v.key), sandbox.values.map((v) => v.key));
   });
 });
+
+
+/*
+ * A job's own block, bounded by the NEXT job key rather than by a named sibling. These
+ * assertions used to slice `publish:` -> `verify-only:`; when the read-only `inventory` and
+ * `inspect-environments` jobs were inserted between them that span silently grew to three jobs,
+ * so every guard assertion using it began measuring the wrong region while still passing. A
+ * guard has to be bounded by structure, not by whichever job happens to come next.
+ * Declared at the end of the file deliberately: function declarations hoist, and this keeps the
+ * import block untouched.
+ */
+function wfJob(wf, name) {
+  const start = wf.indexOf(`\n  ${name}:\n`);
+  if (start === -1) throw new Error(`job ${name} not found in the workflow`);
+  const rest = wf.slice(start + 1);
+  const next = rest.search(/\n  [a-z][a-z0-9-]*:\n/);
+  return next === -1 ? rest : rest.slice(0, next);
+}

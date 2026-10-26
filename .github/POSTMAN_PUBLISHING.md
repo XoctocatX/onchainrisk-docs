@@ -62,7 +62,7 @@ A repository **secret**:
 |---|---|
 | `POSTMAN_API_KEY` | A Postman API key whose only needed rights are updating the three targets below — the canonical collection and the two environments — and nothing else. Create it in Postman under Account Settings → API Keys. |
 
-Three repository **variables** (Settings → Secrets and variables → Actions → Variables):
+Four repository **variables** (Settings → Secrets and variables → Actions → Variables):
 
 | Name | Value |
 |---|---|
@@ -71,7 +71,7 @@ Three repository **variables** (Settings → Secrets and variables → Actions �
 | `POSTMAN_SANDBOX_ENVIRONMENT_ID` | The Postman **cloud** id of `OnChainRisk Sandbox` |
 | `POSTMAN_AUTOPUBLISH_ENABLED` | `true` to allow writing. Leave unset until the activation sequence below is complete. |
 
-(Four variables, not three — the activation switch is the fourth.)
+(Three target ids, one per published artifact, plus the activation switch.)
 
 ### Activation sequence
 
