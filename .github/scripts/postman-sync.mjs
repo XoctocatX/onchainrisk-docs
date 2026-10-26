@@ -174,6 +174,24 @@ const SERVER_METADATA = {
   // nested business object is our content and keeps participating in the hash. Being server
   // metadata rather than identity, it is normalized away for comparison and never echoed back.
   response: ['createdAt', 'updatedAt', 'responseTime'],
+  /*
+   * R5 / CLASS 2. A request's PATH VARIABLES (`request.url.variable[]`, the `:id` segments) come
+   * back from Postman with a generated `id` on every entry. The generator authors only
+   * `{key, value}`, so the first real publish produced fifteen remote-only
+   * `request.url.variable[*].id` paths and a post-PUT verification that could never match.
+   *
+   * SERVER_METADATA rather than IDENTITY, deliberately. IDENTITY exists because omitting an
+   * entity's id in a full replacement makes Postman delete and recreate it; a path variable is
+   * not an independently addressable entity, and the observed PUT — which sent no ids at all —
+   * kept all 45 requests intact and simply had ids regenerated. So: normalized out of the
+   * comparison, never echoed back.
+   *
+   * The position is `request.url.variable[*]` and NOWHERE else. This must not become a recursive
+   * "strip any field named id": a request body, a response example, a `{key: 'id'}` path
+   * variable's own KEY, and any nested business object all legitimately carry `id` as CONTENT,
+   * and those keep participating in the hash.
+   */
+  urlVariable: ['id'],
 };
 
 /** Everything Postman owns at a given position = its identity plus its server metadata. */
@@ -240,6 +258,17 @@ function* managedPositions(collection) {
         positions.push({ holder: e, keys: MANAGED.event, kind: 'event', path: `${here}.event[${j}]` });
         if (isObj(e.script)) positions.push({ holder: e.script, keys: MANAGED.eventScript, kind: 'eventScript', path: `${here}.event[${j}].script` });
       }
+      // Path variables of THIS request only — reached through `request.url.variable`, so no other
+      // `variable` array in the document (the collection root's, for one) is touched here.
+      if (isObj(n.request) && isObj(n.request.url) && Array.isArray(n.request.url.variable)) {
+        for (const [j, v] of n.request.url.variable.entries()) {
+          if (!isObj(v)) continue;
+          positions.push({
+            holder: v, keys: MANAGED.urlVariable, kind: 'urlVariable',
+            path: `${here}.request.url.variable[${j}]`,
+          });
+        }
+      }
       if (Array.isArray(n.item)) walk(n.item, `${here}.`);
     }
   };
@@ -280,12 +309,98 @@ function dropEmptyResponseArrays(collection) {
   return collection;
 }
 
+/*
+ * CLASS 1. The generator writes `variable: []` at the collection root — no collection variables
+ * declared — and Postman does not persist an empty one, so it comes back absent. Both states say
+ * "this collection declares no variables", so they must compare equal.
+ *
+ * Reconciled by COERCING an absent array to empty, rather than by deleting an empty one. The two
+ * are equivalent for the case that broke the publish, but deleting loses reporting precision in
+ * the asymmetric case: with local declaring `base_url` and a remote that has none, deleting the
+ * remote's empty array reports the coarse `variable`, while coercing keeps both sides as keyable
+ * arrays and still names `variable[base_url]` exactly as before. Real drift must stay as legible
+ * as it was.
+ *
+ * Narrow by position: the collection ROOT only. A request's `url.variable` is a different array
+ * at a different position and is never touched here.
+ */
+function coerceCollectionVariable(collection) {
+  if (!('variable' in collection)) collection.variable = [];
+  return collection;
+}
+
+/**
+ * CLASS 3. `url.raw` is a REDUNDANT serialization of `url.host` + `url.path` + `url.query`, and
+ * Postman rewrites it: of the 45 published requests, exactly the ten carrying `disabled: true`
+ * query parameters came back with a different `raw`, and their structured `query` arrays were
+ * returned intact. So the disagreement is in the derived string, not in the URL.
+ *
+ * It is therefore DERIVED on both sides rather than ignored. Ignoring `raw` would lose a field;
+ * deriving it makes the structured URL the single authority and leaves host, path and query
+ * participating in the comparison in full — so any genuine URL change still fails, through both
+ * the structured fields and the derived string.
+ *
+ * Returns null when the structure is not authoritative (no `host`/`path` arrays, e.g. a url given
+ * only as a string). In that case `raw` is left exactly as authored and keeps comparing, because
+ * deriving from an absent structure would be the one way this could hide a real difference.
+ */
+export function canonicalRawUrl(url, { includeDisabled = false } = {}) {
+  if (!isObj(url) || !Array.isArray(url.host) || !Array.isArray(url.path)) return null;
+  const base = `${url.host.join('.')}/${url.path.join('/')}`;
+  const params = (url.query ?? [])
+    .filter((q) => isObj(q) && (includeDisabled || q.disabled !== true))
+    .map((q) => `${q.key ?? ''}=${q.value ?? ''}`);
+  const hash = typeof url.hash === 'string' && url.hash !== '' ? `#${url.hash}` : '';
+  return `${base}${params.length ? `?${params.join('&')}` : ''}${hash}`;
+}
+
+/** Replace every derivable `url.raw` with its canonical form, on whichever side is being read. */
+function canonicalizeRawUrls(collection) {
+  for (const { holder, kind } of managedPositions(collection)) {
+    if (kind !== 'item' || Array.isArray(holder.item)) continue;   // requests, not folders
+    const url = holder.request?.url;
+    if (!isObj(url) || typeof url.raw !== 'string') continue;
+    const canonical = canonicalRawUrl(url);
+    if (canonical !== null) url.raw = canonical;
+  }
+  return collection;
+}
+
+/**
+ * Our OWN artifact's `raw` must agree with its own structure, or canonicalizing `raw` for
+ * comparison would let an authored `raw` that contradicts its host/path/query go unnoticed —
+ * the published file would advertise one URL and the structured fields another. Checked against
+ * the derivation WITH disabled parameters included, because that is the form the generator
+ * emits. Comparison tolerates Postman dropping them; the artifact may not be self-contradictory.
+ */
+export function rawUrlConsistencyProblems(collection) {
+  const problems = [];
+  for (const { holder, kind, path } of managedPositions(clone(unwrap(collection)))) {
+    if (kind !== 'item' || Array.isArray(holder.item)) continue;
+    const url = holder.request?.url;
+    if (!isObj(url) || typeof url.raw !== 'string') continue;
+    const withDisabled = canonicalRawUrl(url, { includeDisabled: true });
+    if (withDisabled === null) continue;
+    if (url.raw !== withDisabled) {
+      problems.push(`${path}: url.raw is ${safePath(url.raw)} but its structure derives `
+        + `${safePath(withDisabled)} — the authored raw contradicts host/path/query`);
+    }
+  }
+  return problems;
+}
+
 /**
  * The comparable content of a collection: ours, with Postman's identity removed and Postman's
  * optional-field serialization canonicalized. stripManaged already returns a clone, so this
  * mutates nothing the caller owns.
+ *
+ * All three canonicalizations are COMPARISON-ONLY and deliberately not part of stripManaged,
+ * because injectRemoteIds builds the outbound payload from stripManaged — so the PUT body still
+ * carries our authored `raw` and our `variable: []` exactly as reviewed.
  */
-export const normalizeForCompare = (collection) => dropEmptyResponseArrays(stripManaged(collection));
+export const normalizeForCompare = (collection) => canonicalizeRawUrls(
+  coerceCollectionVariable(dropEmptyResponseArrays(stripManaged(collection))),
+);
 
 /** Stable, key-order-independent hash of the comparable content. */
 export function contentHash(collection) {
@@ -1128,7 +1243,21 @@ export async function main(argv = process.argv.slice(2), log = console.log, env 
           throw new SyncError(`${e.file} is named "${local.info.name}", expected "${e.expectedName}"`);
         }
         buildIdentityMap(local, { label: `local ${e.file}` });
-        log(`OK  ${e.file}: "${local.info.name}", ${countRequests(local)} requests, normalized sha ${contentHash(local)}`);
+        /*
+         * Comparison derives `url.raw` from the structured URL, so the authored `raw` must not
+         * contradict its own host/path/query — otherwise the published file could advertise one
+         * URL while the structure said another, and nothing would notice.
+         */
+        const rawProblems = rawUrlConsistencyProblems(local);
+        if (rawProblems.length) {
+          throw new SyncError(
+            `${e.file}: ${rawProblems.length} request(s) whose url.raw contradicts their `
+            + `structured URL:\n  ${rawProblems.join('\n  ')}`,
+          );
+        }
+        log(`OK  ${e.file}: "${local.info.name}", ${countRequests(local)} requests, `
+          + `${rawProblems.length === 0 ? 'raw/structure consistent, ' : ''}`
+          + `normalized sha ${contentHash(local)}`);
       } else {
         if (local.name !== e.expectedName) {
           throw new SyncError(`${e.file} is named "${local.name}", expected "${e.expectedName}"`);
