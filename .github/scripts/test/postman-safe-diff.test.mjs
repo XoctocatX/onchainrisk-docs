@@ -8,6 +8,8 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import {
   safeDiff, formatSafeDiff, safeLabel, safeComponent, safeKey, safePath, safeMethod,
   contentHash, environmentContentHash, readLocal, COLLECTIONS,
@@ -424,11 +426,33 @@ describe('SAFE_DIFF_DOES_NOT_CHANGE_HASH', () => {
    * appears: the whole point is that a collection change nobody looked at fails here.
    */
   test('all three real artifacts hash to their reviewed canonical values', () => {
+    /*
+     * TWO witnesses, because one was doing two jobs and could not do both.
+     *
+     * The normalized hash is NOT a witness that the artifact is unchanged: it moves whenever
+     * normalization legitimately changes, which is exactly what the url.raw / url.variable /
+     * collection-variable repair did — the file was byte-identical throughout and this assertion
+     * still failed, reading "hash must be byte-for-byte unchanged". So the byte-level witness is
+     * now explicit and separate, and it is the one that actually pins the published bytes.
+     */
+    const expectedBytes = {
+      'onchainrisk_api_collection.json': '8b7e6898572101b7a16b195f29b73140e685266dae7b90398fc92ac9d8f0918a',
+      'production.postman_environment.json': '059a8f46437851d90d09155332818f64f1cc9e5a1cedfb88ccb47b9f7496bace',
+      'sandbox.postman_environment.json': '026116c58cf34e2398c5beba4154d55377b4a344d301fd4f4d6341ab3e4ca8fd',
+    };
+    for (const [file, hash] of Object.entries(expectedBytes)) {
+      const bytes = createHash('sha256')
+        .update(readFileSync(new URL(`../../../${file}`, import.meta.url))).digest('hex');
+      assert.equal(bytes, hash, `${file} must be byte-for-byte unchanged`);
+    }
+
+    // And the normalized witness, which pins the COMPARISON's canonical form. Updated by the
+    // serialization repair; a change here without a change above means normalization moved.
     const expected = {
-      'onchainrisk_api_collection.json': '21da25ef0fccbc969a0792d22dce6eaa68d2ff0e570e0871f22109359eb19b8c',
+      'onchainrisk_api_collection.json': '75048c63f2e8d6ae652ea7480be728c181a7b75b05e5ac3baec5241d2e64780e',
     };
     for (const [file, hash] of Object.entries(expected)) {
-      assert.equal(contentHash(readLocal(file)), hash, `${file} hash must be byte-for-byte unchanged`);
+      assert.equal(contentHash(readLocal(file)), hash, `${file} normalized hash`);
     }
     // The two ENVIRONMENTS are published artifacts too since the cutover, so they get the same
     // hand-reviewed witness. Their hash is computed by the environment comparator, not the
