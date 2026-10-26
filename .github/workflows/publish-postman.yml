@@ -70,11 +70,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'verify = read-only comparison. publish = write when the remote differs.'
+        description: >-
+          inventory = read-only listing of what exists in Postman cloud, with a disposition per
+          object. verify = read-only comparison of the three configured targets.
+          publish = write when the remote differs.
         required: true
         default: verify
         type: choice
-        options: [verify, publish]
+        options: [inventory, verify, publish]
 
 # Read-only. Publication writes to Postman, never to this repository.
 permissions:
@@ -143,6 +146,35 @@ jobs:
           POSTMAN_SANDBOX_ENVIRONMENT_ID: ${{ vars.POSTMAN_SANDBOX_ENVIRONMENT_ID }}
           POSTMAN_AUTOPUBLISH_ENABLED: ${{ vars.POSTMAN_AUTOPUBLISH_ENABLED }}
         run: node .github/scripts/postman-sync.mjs --publish
+
+  inventory:
+    name: Inventory Postman cloud (read-only)
+    # Deliberately NOT gated on POSTMAN_AUTOPUBLISH_ENABLED, and deliberately NOT restricted to
+    # `main`: the inventory exists to be run BEFORE anything is configured or merged, which is
+    # when the three target ids are still unknown. It is safe from any ref because the script it
+    # runs cannot write -- see .github/scripts/postman-inventory.mjs, whose only network
+    # primitive hard-codes `method: 'GET'` and takes no method argument. Triggering a dispatch
+    # already requires write access to this repository.
+    #
+    # It cannot fall through into publication: `publish` requires mode == 'publish' (or a push to
+    # main), `verify-only` requires mode == 'verify', and neither the collection/environment id
+    # variables nor the activation variable are passed to this job at all.
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'inventory'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: postman
+    steps:
+      - name: Check out the dispatched ref
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: List collections and environments, one disposition each
+        env:
+          # The ONLY secret this job receives, and the only variable of any kind. There is no
+          # POSTMAN_AUTOPUBLISH_ENABLED here: the inventory must work whatever its value is.
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+        run: node .github/scripts/postman-inventory.mjs
 
   verify-only:
     name: Verify against Postman (read-only)

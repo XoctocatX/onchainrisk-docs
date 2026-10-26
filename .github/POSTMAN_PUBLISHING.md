@@ -44,6 +44,7 @@ repository and never upstream of it.
 | pull request touching a published artifact, the workflow or the scripts | validation only — parse, unit tests, secret-shape scan. No credential is available to the job and nothing is written to Postman. |
 | push to `main` changing the collection or either environment file | validation, then publish — **only if `POSTMAN_AUTOPUBLISH_ENABLED` is exactly `true`**. |
 | push to `main` changing anything else (README, CHANGELOG, integration docs, the workflow itself) | nothing. The publication trigger is path-filtered. |
+| `workflow_dispatch` with `mode: inventory` | read-only: lists what exists in Postman cloud with one disposition per object, and writes nothing. Runs from **any** ref, and works whatever `POSTMAN_AUTOPUBLISH_ENABLED` is set to — it is how the three ids get discovered in the first place. |
 | `workflow_dispatch` on `main` with `mode: verify` | read-only: reports `NOOP` or `UPDATE` **per target** and writes nothing. |
 | `workflow_dispatch` on `main` with `mode: publish` | publishes, same as a push, and equally gated on the activation variable. |
 
@@ -82,7 +83,8 @@ how the real targets get inspected before anything is written:
 1. merge this workflow to `main` with `POSTMAN_AUTOPUBLISH_ENABLED` **unset**;
 2. configure `POSTMAN_API_KEY`, `POSTMAN_COLLECTION_ID`, `POSTMAN_PRODUCTION_ENVIRONMENT_ID` and
    `POSTMAN_SANDBOX_ENVIRONMENT_ID`;
-3. run **Actions → Publish Postman artifacts → Run workflow → mode: `verify`** against `main`;
+3. run **mode: `inventory`** to discover the ids (see above), then **mode: `verify`** against
+   `main`;
 4. read the output: all **three** targets' asserted names, their identity fingerprints, the local
    and remote normalized hashes, and `ACTION` per target. This is the first contact with the real
    cloud objects and it writes nothing — the run also reports `WRITES_ISSUED = 0`;
@@ -101,9 +103,46 @@ how the real targets get inspected before anything is written:
 > than discovering a same-named object and writing to it. There is no create path for any of the
 > three targets.
 
-To read a cloud id: open the collection or environment in Postman → ⋯ → **Share** → **Via API**,
-or `GET https://api.postman.com/collections` and `GET https://api.postman.com/environments` with
-the same key and match on `name`.
+### Discovering the three ids: `mode: inventory`
+
+Do not go looking for the API key. It is already in this repository's `POSTMAN_API_KEY` secret,
+and the inventory runs inside Actions so it never has to leave secret storage:
+
+```
+Actions → Publish Postman artifacts → Run workflow → mode: inventory
+```
+
+or, to run it against this branch before anything is merged:
+
+```bash
+gh workflow run publish-postman.yml --ref <branch> -f mode=inventory
+```
+
+It prints every OnChainRisk collection and environment the key can see, with its id, a
+fingerprint of that id, and **one disposition each**:
+
+| Disposition | Meaning |
+|---|---|
+| `REUSE_AS_CANONICAL` | already named exactly as a target expects — its id is the variable value |
+| `KEEP_LEGACY_UNTOUCHED` | a retired per-tier object. Do not publish to it, do not delete it |
+| `RENAME_LATER` | an OnChainRisk object that is neither canonical nor a known retired name |
+| `CREATE_NEW_REQUIRED` | no cloud object carries this target's exact name yet |
+
+A target satisfied by two objects is reported as `AMBIGUOUS — DECIDE`, never resolved by picking
+one. The run ends with `WRITES_ISSUED = 0`.
+
+It is implemented by `.github/scripts/postman-inventory.mjs`, which is read-only by construction
+rather than by configuration: its single network primitive hard-codes `method: 'GET'` and accepts
+no method argument, no write verb appears anywhere in the file, and nothing writable is imported
+from the publisher — only the target table and two pure string helpers. The job receives the API
+key and **nothing else**: no target ids, and not the activation variable. Tests drive it against
+a recording fake and assert the observed method set is exactly `{GET}`, that no request carries a
+body, that a missing key fails before any request is attempted, and — through a real offline CLI
+run — that the key never reaches a log line.
+
+The alternative, by hand: open the collection or environment in Postman → ⋯ → **Share** → **Via
+API**, or `GET https://api.postman.com/collections` and `GET
+https://api.postman.com/environments` with the same key and match on `name`.
 
 An `environment: postman` gate is declared on the publishing jobs, so a reviewer can require
 approval for the credential in Settings → Environments if desired.
